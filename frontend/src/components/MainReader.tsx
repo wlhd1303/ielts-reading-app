@@ -21,7 +21,7 @@ export default function MainReader() {
 
   const [userName, setUserName] = useState<string>('');
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [spokenText, setSpokenText] = useState<string>('');
+  
   const [analyzedText, setAnalyzedText] = useState<DiffResult[]>([]);
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
   const [attempts, setAttempts] = useState<number>(0);
@@ -50,7 +50,7 @@ export default function MainReader() {
         
         if (currentTranscript) {
           finalTranscriptRef.current += currentTranscript;
-          setSpokenText(finalTranscriptRef.current); 
+          
         }
       };
 
@@ -78,7 +78,7 @@ export default function MainReader() {
       setAttempts(prev => prev + 1);
     } else {
       // Reset trạng thái cho lần đọc mới
-      setSpokenText('');
+      
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setIsCompleted(false);
@@ -131,7 +131,7 @@ export default function MainReader() {
                       <button 
                         onClick={() => {
                           setCurrentParagraph(p); 
-                          setSpokenText(''); 
+                          
                           setAnalyzedText([]); 
                           setIsCompleted(false); 
                           setAttempts(0);
