@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { diffWords, type DiffResult } from '../utils/textCompare';
 
-const BASE_URL = 'http://localhost:8080/api';
+const BASE_URL = 'https://ielts-reading-app.onrender.com/api';
 
 interface Article { id: number; title: string; }
 interface Paragraph { id: number; content: string; }

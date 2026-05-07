@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const BASE_URL = 'http://localhost:8080/api';
-
+const BASE_URL = 'https://ielts-reading-app.onrender.com/api';
 interface Article {
   id: number;
   title: string;
