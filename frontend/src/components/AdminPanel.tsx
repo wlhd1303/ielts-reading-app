@@ -142,7 +142,7 @@ export default function AdminPanel() {
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold text-slate-800">Lịch Sử Luyện Tập</h2>
-            <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full">{records.length} lượt hoàn thành</span>
+            <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full">{Array.isArray(records) ? records.length : 0} lượt hoàn thành</span>
           </div>
           
           <div className="overflow-x-auto rounded-xl border border-slate-100">
@@ -155,7 +155,7 @@ export default function AdminPanel() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {records.length === 0 ? (
+                {!Array.isArray(records) || records.length === 0 ? (
                   <tr><td colSpan={3} className="text-center p-8 text-slate-400">Chưa có ai hoàn thành bài tập nào.</td></tr>
                 ) : (
                   records.map(r => (
@@ -167,7 +167,7 @@ export default function AdminPanel() {
                         {r.userName}
                       </td>
                       <td className="p-4 text-center">
-                        <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-sm font-mono">#{r.paragraph.id}</span>
+                        <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-sm font-mono">#{r.paragraph?.id}</span>
                       </td>
                       <td className="p-4 text-sm text-slate-500 text-right">
                         {new Date(r.completedAt).toLocaleString('vi-VN', {
