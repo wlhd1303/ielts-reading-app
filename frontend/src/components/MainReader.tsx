@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import  { useState, useEffect, useRef } from 'react';
 import { diffWords, type DiffResult } from '../utils/textCompare';
 
 const BASE_URL = 'https://ielts-reading-app.onrender.com/api';
