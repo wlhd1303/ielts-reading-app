@@ -1,17 +1,9 @@
 import React, { useState } from 'react';
 
 const BASE_URL = 'https://ielts-reading-app.onrender.com/api';
-interface Article {
-  id: number;
-  title: string;
-}
 
-interface ReadingRecord {
-  id: number;
-  userName: string;
-  paragraph: { id: number };
-  completedAt: string;
-}
+interface Article { id: number; title: string; }
+interface ReadingRecord { id: number; userName: string; paragraph: { id: number }; completedAt: string; }
 
 export default function AdminPanel() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -41,7 +33,7 @@ export default function AdminPanel() {
       const recordRes = await fetch(`${BASE_URL}/records`);
       setRecords(await recordRes.json());
     } catch (error) {
-      console.error("Lỗi:", error);
+      console.error("Lỗi kết nối:", error);
     }
   };
 
@@ -66,11 +58,11 @@ export default function AdminPanel() {
       body: JSON.stringify({ content: newParagraphContent, orderIndex: 1 })
     });
     setNewParagraphContent('');
-    alert("Thêm đoạn văn thành công!");
+    alert("Đã thêm đoạn văn thành công!");
   };
 
   const handleDeleteArticle = async (id: number) => {
-    if (window.confirm("Chắc chắn xóa bài này?")) {
+    if (window.confirm("Hệ thống sẽ xóa bài đọc này và TẤT CẢ đoạn văn bên trong. Tiếp tục?")) {
       await fetch(`${BASE_URL}/articles/${id}`, { method: 'DELETE' });
       fetchData();
     }
@@ -78,60 +70,116 @@ export default function AdminPanel() {
 
   if (!isAuthenticated) {
     return (
-      <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded shadow-md">
-        <h2 className="text-2xl font-bold mb-6 text-center">Đăng Nhập Admin</h2>
-        <form onSubmit={handleLogin} className="flex flex-col gap-4">
-          <input type="password" placeholder="Nhập mật khẩu..." value={password} onChange={(e) => setPassword(e.target.value)} className="border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500" />
-          <button type="submit" className="bg-gray-800 text-white py-2 rounded hover:bg-gray-700">Vào Trang</button>
-        </form>
+      <div className="min-h-[70vh] flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+            </div>
+            <h2 className="text-2xl font-bold text-slate-800">Quản Trị Hệ Thống</h2>
+            <p className="text-slate-500 mt-2 text-sm">Vui lòng nhập mật khẩu để tiếp tục</p>
+          </div>
+          <form onSubmit={handleLogin} className="space-y-5">
+            <input 
+              type="password" 
+              placeholder="Nhập mật khẩu..." 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 focus:bg-white transition-all text-center tracking-widest" 
+            />
+            <button type="submit" className="w-full bg-slate-800 text-white py-3 rounded-xl font-medium hover:bg-slate-900 transition-colors shadow-md">
+              Xác Nhận
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
-      <div className="bg-white p-6 rounded shadow-md">
-        <h2 className="text-xl font-bold mb-4 border-b pb-2">Quản lý Bài đọc</h2>
-        <form onSubmit={handleAddArticle} className="flex gap-2 mb-6">
-          <input type="text" placeholder="Tên bài (VD: Test 1)..." value={newArticleTitle} onChange={(e) => setNewArticleTitle(e.target.value)} className="border p-2 rounded flex-1 outline-none focus:ring-2 focus:ring-green-500" />
-          <button type="submit" className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Thêm Bài</button>
-        </form>
-        <ul className="mb-8 space-y-2">
-          {articles.map(a => (
-            <li key={a.id} className="flex justify-between bg-gray-50 p-3 rounded border">
-              <span className="font-semibold">{a.title}</span>
-              <button onClick={() => handleDeleteArticle(a.id)} className="text-red-500 text-sm hover:underline">Xóa</button>
-            </li>
-          ))}
-        </ul>
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      {/* Cột trái: Quản lý bài đọc */}
+      <div className="lg:col-span-5 space-y-8">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+          <h2 className="text-lg font-bold text-slate-800 mb-5">Tạo Bài Đọc Mới</h2>
+          <form onSubmit={handleAddArticle} className="flex gap-3">
+            <input type="text" placeholder="Tên bài (VD: Test 1)..." value={newArticleTitle} onChange={(e) => setNewArticleTitle(e.target.value)} className="flex-1 px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50" />
+            <button type="submit" className="bg-blue-600 text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-sm">Thêm</button>
+          </form>
 
-        <h2 className="text-xl font-bold mb-4 border-b pb-2">Thêm Đoạn văn</h2>
-        <form onSubmit={handleAddParagraph} className="flex flex-col gap-3">
-          <select className="border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setSelectedArticleId(e.target.value)} value={selectedArticleId}>
-            <option value="" disabled>-- Chọn bài đọc --</option>
-            {articles.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-          </select>
-          <textarea rows={5} placeholder="Dán nội dung..." value={newParagraphContent} onChange={(e) => setNewParagraphContent(e.target.value)} className="border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-          <button type="submit" className="bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Lưu Đoạn Văn</button>
-        </form>
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Danh sách hiện tại</h3>
+            <ul className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+              {Array.isArray(articles) && articles.map(a => (
+                <li key={a.id} className="flex justify-between items-center group bg-white border border-slate-100 hover:border-blue-200 p-3 rounded-xl transition-colors shadow-sm">
+                  <span className="font-medium text-slate-700">{a.title}</span>
+                  <button onClick={() => handleDeleteArticle(a.id)} className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+          <h2 className="text-lg font-bold text-slate-800 mb-5">Thêm Đoạn Văn</h2>
+          <form onSubmit={handleAddParagraph} className="flex flex-col gap-4">
+            <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-700" onChange={(e) => setSelectedArticleId(e.target.value)} value={selectedArticleId}>
+              <option value="" disabled>-- Lựa chọn Bài đọc --</option>
+              {Array.isArray(articles) && articles.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+            <textarea rows={6} placeholder="Dán nội dung tiếng Anh vào đây..." value={newParagraphContent} onChange={(e) => setNewParagraphContent(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"></textarea>
+            <button type="submit" className="w-full bg-slate-800 text-white py-3 rounded-xl font-medium hover:bg-slate-900 transition-colors shadow-md">
+              Lưu Vào CSDL
+            </button>
+          </form>
+        </div>
       </div>
 
-      <div className="bg-white p-6 rounded shadow-md">
-        <h2 className="text-xl font-bold mb-4 border-b pb-2">Lịch sử Luyện đọc</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead><tr className="bg-gray-100"><th className="p-2 border">Họ tên</th><th className="p-2 border text-center">Đoạn</th><th className="p-2 border">Thời gian</th></tr></thead>
-            <tbody>
-              {records.length === 0 ? <tr><td colSpan={3} className="text-center p-4 text-gray-500">Chưa có dữ liệu</td></tr> : 
-              records.map(r => (
-                <tr key={r.id} className="hover:bg-gray-50">
-                  <td className="p-2 border font-medium">{r.userName}</td>
-                  <td className="p-2 border text-center">{r.paragraph.id}</td>
-                  <td className="p-2 border text-sm text-gray-600">{new Date(r.completedAt).toLocaleString('vi-VN')}</td>
+      {/* Cột phải: Bảng thống kê */}
+      <div className="lg:col-span-7">
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-bold text-slate-800">Lịch Sử Luyện Tập</h2>
+            <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full">{records.length} lượt hoàn thành</span>
+          </div>
+          
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="w-full text-left border-collapse whitespace-nowrap">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-sm uppercase tracking-wider">
+                  <th className="p-4 font-semibold">Học Viên</th>
+                  <th className="p-4 font-semibold text-center">Đoạn Văn ID</th>
+                  <th className="p-4 font-semibold text-right">Hoàn Thành Lúc</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {records.length === 0 ? (
+                  <tr><td colSpan={3} className="text-center p-8 text-slate-400">Chưa có ai hoàn thành bài tập nào.</td></tr>
+                ) : (
+                  records.map(r => (
+                    <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 font-medium text-slate-800 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 text-white flex items-center justify-center text-xs font-bold uppercase">
+                          {r.userName.charAt(0)}
+                        </div>
+                        {r.userName}
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-sm font-mono">#{r.paragraph.id}</span>
+                      </td>
+                      <td className="p-4 text-sm text-slate-500 text-right">
+                        {new Date(r.completedAt).toLocaleString('vi-VN', {
+                          hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric'
+                        })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
