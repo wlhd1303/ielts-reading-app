@@ -5,9 +5,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
-// Thêm thư viện này để giúp JSON không bị "ngáo" khi gặp dữ liệu Lazy
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-
 @Entity
 @Table(name = "reading_records")
 @Data
@@ -20,10 +17,9 @@ public class ReadingRecord {
     @Column(name = "user_name", nullable = false)
     private String userName;
 
-    // Đã thêm @JsonIgnoreProperties để bỏ qua các biến rác của Hibernate khi ép kiểu sang JSON
-    @ManyToOne(fetch = FetchType.LAZY)
+    // Đã xóa (fetch = FetchType.LAZY) để luôn lấy thông tin đoạn văn khi lấy lịch sử đọc
+    @ManyToOne
     @JoinColumn(name = "paragraph_id", nullable = false)
-    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
     private Paragraph paragraph;
 
     @Column(columnDefinition = "integer default 1")
