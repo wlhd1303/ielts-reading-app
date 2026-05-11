@@ -7,7 +7,6 @@ interface Article { id: number; title: string; }
 interface Paragraph { id: number; content: string; }
 interface WrongWord { word: string; phonetic: string; }
 
-// Khai báo để TypeScript không báo lỗi SpeechRecognition
 declare global {
   interface Window {
     SpeechRecognition: any;
@@ -19,7 +18,6 @@ export default function MainReader() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
   
-  // State quản lý đoạn văn và bộ nhớ đệm (Cache) cho đoạn văn
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
   const [paragraphCache, setParagraphCache] = useState<Record<number, Paragraph[]>>({});
   const [isLoadingParagraphs, setIsLoadingParagraphs] = useState<boolean>(false);
@@ -38,49 +36,64 @@ export default function MainReader() {
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
 
+  // 1. TÁCH RIÊNG: Chỉ tải danh sách bài đọc 1 lần duy nhất khi mới vào web
   useEffect(() => {
-    // CÁCH 2: Luôn fetch mới danh sách bài đọc để cập nhật ngay lập tức từ Admin
     fetch(`${BASE_URL}/articles`)
       .then(res => res.json())
       .then(data => setArticles(data))
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
+  }, []); // <-- Ngoặc vuông rỗng nghĩa là chỉ chạy 1 lần
 
+  // 2. KHỞI TẠO MICRO: Quản lý vòng đời thu âm chặt chẽ
+  useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.lang = 'en-US';
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
+    if (!SpeechRecognition) return;
 
-      recognitionRef.current.onresult = (event: any) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            currentTranscript += event.results[i][0].transcript + ' ';
-          }
-        }
-        if (currentTranscript) {
-          finalTranscriptRef.current += currentTranscript;
-        }
-      };
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-      recognitionRef.current.onend = () => {
-        if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
-          analyzeResult(currentParagraph.content, finalTranscriptRef.current);
+    recognition.onresult = (event: any) => {
+      let currentTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          currentTranscript += event.results[i][0].transcript + ' ';
         }
-      };
-    }
-  }, [currentParagraph]);
+      }
+      if (currentTranscript) {
+        finalTranscriptRef.current += currentTranscript;
+      }
+    };
 
-  // Xử lý chọn bài đọc (Vẫn dùng Cache cho Paragraphs để tối ưu tốc độ)
+    recognition.onend = () => {
+      if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
+        analyzeResult(currentParagraph.content, finalTranscriptRef.current);
+      }
+      // Đảm bảo nút bấm chuyển về trạng thái tắt nếu mic tự ngưng
+      setIsRecording(false); 
+    };
+
+    recognitionRef.current = recognition;
+
+    // QUAN TRỌNG NHẤT: Khi chuyển sang đoạn văn khác, phải ngắt hẳn mic cũ đi
+    return () => {
+      recognition.abort();
+    };
+  }, [currentParagraph]); // Chỉ chạy lại khi đổi đoạn văn
+
   const handleSelectArticle = async (articleId: number) => {
+    if (isRecording) {
+      recognitionRef.current?.abort();
+      setIsRecording(false);
+    }
+    
     setSelectedArticleId(articleId);
     setCurrentParagraph(null); 
     setScore(null);
     setAnalyzedText([]);
     setWrongWords([]);
 
-    // Nếu đã có trong cache thì lấy ra luôn
     if (paragraphCache[articleId]) {
       setParagraphs(paragraphCache[articleId]);
       return;
@@ -115,7 +128,7 @@ export default function MainReader() {
         recognitionRef.current?.start();
         setIsRecording(true);
       } catch (err) {
-        console.error("Speech recognition error:", err);
+        console.error("Lỗi Micro:", err);
       }
     }
   };
@@ -193,6 +206,11 @@ export default function MainReader() {
                         <li key={p.id} className="relative">
                           <button 
                             onClick={() => {
+                              // Tắt mic ngay lập tức nếu đang đọc dở mà bấm sang đoạn khác
+                              if (isRecording) {
+                                recognitionRef.current?.abort();
+                                setIsRecording(false);
+                              }
                               setCurrentParagraph(p); 
                               setAnalyzedText([]); 
                               setScore(null);
@@ -214,7 +232,7 @@ export default function MainReader() {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Khu vực đọc */}
       <div className="lg:col-span-3">
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col">
           {!currentParagraph ? (
