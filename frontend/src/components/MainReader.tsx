@@ -25,8 +25,6 @@ export default function MainReader() {
 
   const [userName, setUserName] = useState<string>('');
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  
-  // State mới: Quản lý trạng thái đang chấm điểm (Loading)
   const [isGrading, setIsGrading] = useState<boolean>(false);
   
   const [analyzedText, setAnalyzedText] = useState<DiffResult[]>([]);
@@ -39,25 +37,23 @@ export default function MainReader() {
   const finalTranscriptRef = useRef<string>('');
 
   useEffect(() => {
-    // Chỉ tải danh sách bài đọc 1 lần
     fetch(`${BASE_URL}/articles`)
       .then(res => res.json())
       .then(data => setArticles(data))
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
   }, []);
 
-  // Hàm "hủy diệt" Micro cực mạnh để dọn dẹp khi chuyển đoạn
   const forceStopAndCleanMic = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.onend = null; // Chặn không cho gọi hàm chấm điểm
-      recognitionRef.current.abort(); // Ngắt phần cứng micro ngay lập tức
+      recognitionRef.current.onend = null;
+      recognitionRef.current.abort();
       recognitionRef.current = null;
     }
     setIsRecording(false);
   };
 
   const handleSelectArticle = async (articleId: number) => {
-    forceStopAndCleanMic(); // Dọn dẹp micro trước khi chuyển bài
+    forceStopAndCleanMic();
     
     setSelectedArticleId(articleId);
     setCurrentParagraph(null); 
@@ -93,12 +89,11 @@ export default function MainReader() {
     }
 
     if (isRecording) {
-      // Khi nhấn "Ngừng", cho phép nó chạy onend để chấm điểm
+      // VÁ LỖI Ở ĐÂY: Ép thanh Loading hiện lên NGAY LẬP TỨC khi vừa bấm nút Ngừng
+      setIsGrading(true); 
       if (recognitionRef.current) recognitionRef.current.stop();
-      setIsRecording(false);
       setAttempts(prev => prev + 1);
     } else {
-      // Khi bắt đầu đọc, tạo một Micro HOÀN TOÀN MỚI
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
@@ -108,6 +103,17 @@ export default function MainReader() {
       recognition.lang = 'en-US';
       recognition.continuous = true;
       recognition.interimResults = true;
+
+      recognition.onstart = () => setIsRecording(true);
+      
+      recognition.onerror = (event: any) => {
+        console.error("Lỗi Micro:", event.error);
+        setIsRecording(false);
+        setIsGrading(false); // Tắt loading nếu mic bị lỗi
+        if (event.error === 'not-allowed') {
+          alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
+        }
+      };
 
       recognition.onresult = (event: any) => {
         let currentTranscript = '';
@@ -125,6 +131,12 @@ export default function MainReader() {
         setIsRecording(false);
         if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
           analyzeResult(currentParagraph.content, finalTranscriptRef.current);
+        } else {
+          // VÁ LỖI Ở ĐÂY: Tắt thanh loading nếu người dùng nộp bài trắng
+          setIsGrading(false); 
+          if (finalTranscriptRef.current.trim().length === 0) {
+             alert("Hệ thống chưa nghe được bạn nói gì. Hãy bấm đọc lại và nói to hơn nhé!");
+          }
         }
       };
 
@@ -132,7 +144,6 @@ export default function MainReader() {
 
       try {
         recognition.start();
-        setIsRecording(true);
       } catch (err) {
         console.error("Lỗi khởi động Micro:", err);
       }
@@ -156,8 +167,10 @@ export default function MainReader() {
   };
 
   const analyzeResult = async (original: string, spoken: string) => {
-    setIsGrading(true); // BẬT THANH LOADING
+    // Không cần setIsGrading(true) ở đây nữa vì đã bật ngay khi bấm nút Ngừng
     try {
+      await new Promise(resolve => setTimeout(resolve, 800));
+
       const result = diffWords(original, spoken);
       setAnalyzedText(result);
       
@@ -186,7 +199,7 @@ export default function MainReader() {
     } catch (error) {
       console.error("Lỗi khi chấm điểm:", error);
     } finally {
-      setIsGrading(false); // TẮT THANH LOADING
+      setIsGrading(false); // Tắt loading khi đã chấm xong xuôi
     }
   };
 
@@ -217,8 +230,7 @@ export default function MainReader() {
                         <li key={p.id} className="relative">
                           <button 
                             onClick={() => {
-                              forceStopAndCleanMic(); // Hủy mic cũ khi chuyển đoạn
-                              
+                              forceStopAndCleanMic();
                               setCurrentParagraph(p); 
                               setAnalyzedText([]); 
                               setScore(null);
@@ -272,7 +284,7 @@ export default function MainReader() {
                   disabled={isGrading}
                   className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-white transition-all shadow-md sm:min-w-[200px] ${isGrading ? 'bg-slate-400 cursor-not-allowed shadow-none' : isRecording ? 'bg-rose-500 hover:bg-rose-600 active:scale-95 hover:shadow-rose-500/25 animate-pulse' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 hover:shadow-blue-600/25'}`}
                 >
-                  {isRecording ? (
+                  {isRecording && !isGrading ? (
                     <><div className="w-2.5 h-2.5 rounded-full bg-white animate-bounce"></div>Ngừng & Chấm Điểm</>
                   ) : isGrading ? (
                     <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>Đang xử lý...</>
@@ -282,7 +294,6 @@ export default function MainReader() {
                 </button>
               </div>
 
-              {/* THANH LOADING KHI CHẤM ĐIỂM */}
               {isGrading && (
                 <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
                   <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -290,7 +301,6 @@ export default function MainReader() {
                 </div>
               )}
 
-              {/* Bảng Điểm Tóm Tắt */}
               {!isGrading && score !== null && (
                 <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border animate-fade-in-up ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div>
