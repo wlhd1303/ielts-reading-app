@@ -26,67 +26,38 @@ export default function MainReader() {
   const [userName, setUserName] = useState<string>('');
   const [isRecording, setIsRecording] = useState<boolean>(false);
   
+  // State mới: Quản lý trạng thái đang chấm điểm (Loading)
+  const [isGrading, setIsGrading] = useState<boolean>(false);
+  
   const [analyzedText, setAnalyzedText] = useState<DiffResult[]>([]);
   const [score, setScore] = useState<number | null>(null);
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
-  const [isFetchingPhonetics, setIsFetchingPhonetics] = useState<boolean>(false);
   
   const [attempts, setAttempts] = useState<number>(0);
 
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
 
-  // 1. TÁCH RIÊNG: Chỉ tải danh sách bài đọc 1 lần duy nhất khi mới vào web
   useEffect(() => {
+    // Chỉ tải danh sách bài đọc 1 lần
     fetch(`${BASE_URL}/articles`)
       .then(res => res.json())
       .then(data => setArticles(data))
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
-  }, []); // <-- Ngoặc vuông rỗng nghĩa là chỉ chạy 1 lần
+  }, []);
 
-  // 2. KHỞI TẠO MICRO: Quản lý vòng đời thu âm chặt chẽ
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    recognition.onresult = (event: any) => {
-      let currentTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          currentTranscript += event.results[i][0].transcript + ' ';
-        }
-      }
-      if (currentTranscript) {
-        finalTranscriptRef.current += currentTranscript;
-      }
-    };
-
-    recognition.onend = () => {
-      if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
-        analyzeResult(currentParagraph.content, finalTranscriptRef.current);
-      }
-      // Đảm bảo nút bấm chuyển về trạng thái tắt nếu mic tự ngưng
-      setIsRecording(false); 
-    };
-
-    recognitionRef.current = recognition;
-
-    // QUAN TRỌNG NHẤT: Khi chuyển sang đoạn văn khác, phải ngắt hẳn mic cũ đi
-    return () => {
-      recognition.abort();
-    };
-  }, [currentParagraph]); // Chỉ chạy lại khi đổi đoạn văn
+  // Hàm "hủy diệt" Micro cực mạnh để dọn dẹp khi chuyển đoạn
+  const forceStopAndCleanMic = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null; // Chặn không cho gọi hàm chấm điểm
+      recognitionRef.current.abort(); // Ngắt phần cứng micro ngay lập tức
+      recognitionRef.current = null;
+    }
+    setIsRecording(false);
+  };
 
   const handleSelectArticle = async (articleId: number) => {
-    if (isRecording) {
-      recognitionRef.current?.abort();
-      setIsRecording(false);
-    }
+    forceStopAndCleanMic(); // Dọn dẹp micro trước khi chuyển bài
     
     setSelectedArticleId(articleId);
     setCurrentParagraph(null); 
@@ -115,20 +86,55 @@ export default function MainReader() {
   const toggleRecording = () => {
     if (!userName.trim()) return alert("Vui lòng nhập tên của bạn trước nhé!");
     
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Trình duyệt không hỗ trợ. Vui lòng dùng Google Chrome!");
+      return;
+    }
+
     if (isRecording) {
-      recognitionRef.current?.stop();
+      // Khi nhấn "Ngừng", cho phép nó chạy onend để chấm điểm
+      if (recognitionRef.current) recognitionRef.current.stop();
       setIsRecording(false);
       setAttempts(prev => prev + 1);
     } else {
+      // Khi bắt đầu đọc, tạo một Micro HOÀN TOÀN MỚI
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
+      
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event: any) => {
+        let currentTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            currentTranscript += event.results[i][0].transcript + ' ';
+          }
+        }
+        if (currentTranscript) {
+          finalTranscriptRef.current += currentTranscript;
+        }
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
+          analyzeResult(currentParagraph.content, finalTranscriptRef.current);
+        }
+      };
+
+      recognitionRef.current = recognition;
+
       try {
-        recognitionRef.current?.start();
+        recognition.start();
         setIsRecording(true);
       } catch (err) {
-        console.error("Lỗi Micro:", err);
+        console.error("Lỗi khởi động Micro:", err);
       }
     }
   };
@@ -150,38 +156,43 @@ export default function MainReader() {
   };
 
   const analyzeResult = async (original: string, spoken: string) => {
-    const result = diffWords(original, spoken);
-    setAnalyzedText(result);
-    
-    const totalWords = result.length;
-    const correctWords = result.filter(r => r.status === 'correct').length;
-    const currentScore = totalWords > 0 ? Math.round((correctWords / totalWords) * 100) : 0;
-    setScore(currentScore);
+    setIsGrading(true); // BẬT THANH LOADING
+    try {
+      const result = diffWords(original, spoken);
+      setAnalyzedText(result);
+      
+      const totalWords = result.length;
+      const correctWords = result.filter(r => r.status === 'correct').length;
+      const currentScore = totalWords > 0 ? Math.round((correctWords / totalWords) * 100) : 0;
+      setScore(currentScore);
 
-    const incorrectCleanWords = result.filter(r => r.status === 'incorrect' && r.cleanWord).map(r => r.cleanWord);
-    if (incorrectCleanWords.length > 0) {
-      setIsFetchingPhonetics(true);
-      const phoneticsData = await fetchPhonetics(incorrectCleanWords);
-      setWrongWords(phoneticsData);
-      setIsFetchingPhonetics(false);
-    } else {
-      setWrongWords([]);
-    }
-
-    if (currentScore >= 80 && spoken.trim().length > 0) {
-      if (currentParagraph) {
-        await fetch(`${BASE_URL}/records/${currentParagraph.id}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName, attempts: attempts + 1 })
-        });
+      const incorrectCleanWords = result.filter(r => r.status === 'incorrect' && r.cleanWord).map(r => r.cleanWord);
+      if (incorrectCleanWords.length > 0) {
+        const phoneticsData = await fetchPhonetics(incorrectCleanWords);
+        setWrongWords(phoneticsData);
+      } else {
+        setWrongWords([]);
       }
+
+      if (currentScore >= 80 && spoken.trim().length > 0) {
+        if (currentParagraph) {
+          await fetch(`${BASE_URL}/records/${currentParagraph.id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName, attempts: attempts + 1 })
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Lỗi khi chấm điểm:", error);
+    } finally {
+      setIsGrading(false); // TẮT THANH LOADING
     }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Sidebar chọn bài */}
+      {/* Sidebar */}
       <div className="lg:col-span-1">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 lg:sticky lg:top-24">
           <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -206,11 +217,8 @@ export default function MainReader() {
                         <li key={p.id} className="relative">
                           <button 
                             onClick={() => {
-                              // Tắt mic ngay lập tức nếu đang đọc dở mà bấm sang đoạn khác
-                              if (isRecording) {
-                                recognitionRef.current?.abort();
-                                setIsRecording(false);
-                              }
+                              forceStopAndCleanMic(); // Hủy mic cũ khi chuyển đoạn
+                              
                               setCurrentParagraph(p); 
                               setAnalyzedText([]); 
                               setScore(null);
@@ -232,7 +240,7 @@ export default function MainReader() {
         </div>
       </div>
 
-      {/* Khu vực đọc */}
+      {/* Main Content */}
       <div className="lg:col-span-3">
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col">
           {!currentParagraph ? (
@@ -255,23 +263,35 @@ export default function MainReader() {
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 focus:bg-white transition-all" 
                     value={userName} 
                     onChange={(e) => setUserName(e.target.value)} 
-                    disabled={isRecording} 
+                    disabled={isRecording || isGrading} 
                   />
                 </div>
                 
                 <button 
                   onClick={toggleRecording} 
-                  className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-white transition-all shadow-md active:scale-95 sm:min-w-[200px] ${isRecording ? 'bg-rose-500 hover:bg-rose-600 hover:shadow-rose-500/25 animate-pulse' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-600/25'}`}
+                  disabled={isGrading}
+                  className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-white transition-all shadow-md sm:min-w-[200px] ${isGrading ? 'bg-slate-400 cursor-not-allowed shadow-none' : isRecording ? 'bg-rose-500 hover:bg-rose-600 active:scale-95 hover:shadow-rose-500/25 animate-pulse' : 'bg-blue-600 hover:bg-blue-700 active:scale-95 hover:shadow-blue-600/25'}`}
                 >
                   {isRecording ? (
                     <><div className="w-2.5 h-2.5 rounded-full bg-white animate-bounce"></div>Ngừng & Chấm Điểm</>
+                  ) : isGrading ? (
+                    <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>Đang xử lý...</>
                   ) : (
                     <><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>{score !== null ? 'Đọc Lại Lần Nữa' : 'Bắt Đầu Đọc'}</>
                   )}
                 </button>
               </div>
 
-              {score !== null && (
+              {/* THANH LOADING KHI CHẤM ĐIỂM */}
+              {isGrading && (
+                <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
+                  <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+                  <span className="text-blue-800 font-medium">Hệ thống đang phân tích giọng đọc và tra cứu phiên âm...</span>
+                </div>
+              )}
+
+              {/* Bảng Điểm Tóm Tắt */}
+              {!isGrading && score !== null && (
                 <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border animate-fade-in-up ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div>
                     <h3 className={`font-bold text-lg ${score >= 80 ? 'text-emerald-800' : 'text-amber-800'}`}>{score >= 80 ? '🎉 Đạt Yêu Cầu!' : '💪 Cần Cố Gắng Thêm!'}</h3>
@@ -282,35 +302,31 @@ export default function MainReader() {
               )}
 
               <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8">
-                {analyzedText.length > 0 ? (
+                {analyzedText.length > 0 && !isGrading ? (
                   <div className="space-x-1">
                     {analyzedText.map((item, i) => (
                       <span key={i} className={`transition-colors duration-300 ${item.status === 'correct' ? 'text-slate-800' : 'text-rose-600 font-semibold bg-rose-100/50 border-b-2 border-rose-300 rounded-sm px-1'}`}>{item.originalWord}</span>
                     ))}
                   </div>
                 ) : (
-                  <p>{currentParagraph.content}</p>
+                  <p className={isGrading ? "opacity-50" : ""}>{currentParagraph.content}</p>
                 )}
               </div>
 
-              {analyzedText.length > 0 && wrongWords.length > 0 && (
+              {!isGrading && analyzedText.length > 0 && wrongWords.length > 0 && (
                  <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm animate-fade-in">
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     Các từ cần cải thiện phát âm
                   </h3>
-                  {isFetchingPhonetics ? (
-                    <div className="text-slate-500 text-sm animate-pulse">Đang tra cứu phiên âm...</div>
-                  ) : (
-                    <div className="flex flex-wrap gap-3">
-                      {wrongWords.map((item, i) => (
-                        <div key={i} className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-lg flex flex-col">
-                          <span className="font-bold text-rose-700">{item.word}</span>
-                          {item.phonetic && <span className="text-sm text-slate-500 font-mono">{item.phonetic}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-3">
+                    {wrongWords.map((item, i) => (
+                      <div key={i} className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-lg flex flex-col">
+                        <span className="font-bold text-rose-700">{item.word}</span>
+                        {item.phonetic && <span className="text-sm text-slate-500 font-mono">{item.phonetic}</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
