@@ -43,13 +43,19 @@ export default function MainReader() {
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
   }, []);
 
+  // Hàm dọn dẹp Micro triệt để
   const forceStopAndCleanMic = () => {
     if (recognitionRef.current) {
       recognitionRef.current.onend = null;
-      recognitionRef.current.abort();
+      recognitionRef.current.onstart = null;
+      recognitionRef.current.onerror = null;
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {}
       recognitionRef.current = null;
     }
     setIsRecording(false);
+    setIsGrading(false);
   };
 
   const handleSelectArticle = async (articleId: number) => {
@@ -89,11 +95,14 @@ export default function MainReader() {
     }
 
     if (isRecording) {
-      // VÁ LỖI Ở ĐÂY: Ép thanh Loading hiện lên NGAY LẬP TỨC khi vừa bấm nút Ngừng
+      // Hiện Loading ngay lập tức khi bấm dừng
       setIsGrading(true); 
       if (recognitionRef.current) recognitionRef.current.stop();
       setAttempts(prev => prev + 1);
     } else {
+      // Dọn dẹp sạch sẽ Micro cũ nếu có trước khi "Đọc lại lần nữa"
+      forceStopAndCleanMic();
+
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
@@ -109,7 +118,7 @@ export default function MainReader() {
       recognition.onerror = (event: any) => {
         console.error("Lỗi Micro:", event.error);
         setIsRecording(false);
-        setIsGrading(false); // Tắt loading nếu mic bị lỗi
+        setIsGrading(false);
         if (event.error === 'not-allowed') {
           alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
         }
@@ -132,7 +141,6 @@ export default function MainReader() {
         if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
           analyzeResult(currentParagraph.content, finalTranscriptRef.current);
         } else {
-          // VÁ LỖI Ở ĐÂY: Tắt thanh loading nếu người dùng nộp bài trắng
           setIsGrading(false); 
           if (finalTranscriptRef.current.trim().length === 0) {
              alert("Hệ thống chưa nghe được bạn nói gì. Hãy bấm đọc lại và nói to hơn nhé!");
@@ -146,6 +154,8 @@ export default function MainReader() {
         recognition.start();
       } catch (err) {
         console.error("Lỗi khởi động Micro:", err);
+        setIsGrading(false);
+        setIsRecording(false);
       }
     }
   };
@@ -167,8 +177,9 @@ export default function MainReader() {
   };
 
   const analyzeResult = async (original: string, spoken: string) => {
-    // Không cần setIsGrading(true) ở đây nữa vì đã bật ngay khi bấm nút Ngừng
+    setIsGrading(true);
     try {
+      // Fake delay nhẹ để người dùng cảm thấy hệ thống đang làm việc
       await new Promise(resolve => setTimeout(resolve, 800));
 
       const result = diffWords(original, spoken);
@@ -199,13 +210,13 @@ export default function MainReader() {
     } catch (error) {
       console.error("Lỗi khi chấm điểm:", error);
     } finally {
-      setIsGrading(false); // Tắt loading khi đã chấm xong xuôi
+      setIsGrading(false);
     }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Sidebar */}
+      {/* Sidebar chọn bài */}
       <div className="lg:col-span-1">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 lg:sticky lg:top-24">
           <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -252,7 +263,7 @@ export default function MainReader() {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Khu vực đọc chính */}
       <div className="lg:col-span-3">
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col">
           {!currentParagraph ? (
@@ -294,6 +305,7 @@ export default function MainReader() {
                 </button>
               </div>
 
+              {/* THANH LOADING HIỆN TỨC THÌ */}
               {isGrading && (
                 <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
                   <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
