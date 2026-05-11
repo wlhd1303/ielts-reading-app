@@ -4,6 +4,9 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+// Thêm 2 thư viện này
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 @Entity
 @Table(name = "reading_records")
@@ -17,9 +20,9 @@ public class ReadingRecord {
     @Column(name = "user_name", nullable = false)
     private String userName;
 
-    // Đã xóa (fetch = FetchType.LAZY) để luôn lấy thông tin đoạn văn khi lấy lịch sử đọc
     @ManyToOne
     @JoinColumn(name = "paragraph_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE) // Vũ khí hạng nặng: Đoạn văn bị xóa -> Lịch sử đọc bay màu ngay lập tức
     private Paragraph paragraph;
 
     @Column(columnDefinition = "integer default 1")

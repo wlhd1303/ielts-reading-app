@@ -3,6 +3,10 @@ package com.example.readingielts.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.List;
+// Thêm 2 thư viện này để ép Database xóa tự động
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 @Entity
 @Table(name = "paragraphs")
@@ -15,7 +19,6 @@ public class Paragraph {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Sửa quan trọng ở đây: Cho phép lưu nội dung dài
     @Column(columnDefinition = "TEXT")
     private String content;
 
@@ -23,6 +26,11 @@ public class Paragraph {
 
     @ManyToOne
     @JoinColumn(name = "article_id")
-    @JsonIgnore // Tránh lỗi vòng lặp vô tận khi trả về JSON
+    @OnDelete(action = OnDeleteAction.CASCADE) // Vũ khí hạng nặng: Bài bị xóa -> Đoạn văn bay màu ngay lập tức
+    @JsonIgnore 
     private Article article;
+
+    @OneToMany(mappedBy = "paragraph", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore 
+    private List<ReadingRecord> readingRecords;
 }
