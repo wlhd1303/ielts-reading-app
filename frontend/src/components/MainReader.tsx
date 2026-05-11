@@ -5,6 +5,7 @@ const BASE_URL = 'https://ielts-reading-app.onrender.com/api';
 
 interface Article { id: number; title: string; }
 interface Paragraph { id: number; content: string; }
+interface WrongWord { word: string; phonetic: string; }
 
 declare global {
   interface Window {
@@ -12,7 +13,6 @@ declare global {
     webkitSpeechRecognition: any;
   }
 }
-
 export default function MainReader() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
@@ -23,7 +23,11 @@ export default function MainReader() {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   
   const [analyzedText, setAnalyzedText] = useState<DiffResult[]>([]);
-  const [isCompleted, setIsCompleted] = useState<boolean>(false);
+  const [score, setScore] = useState<number | null>(null);
+  const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
+  const [isFetchingPhonetics, setIsFetchingPhonetics] = useState<boolean>(false);
+  
+ 
   const [attempts, setAttempts] = useState<number>(0);
 
   const recognitionRef = useRef<any>(null);
@@ -75,7 +79,9 @@ export default function MainReader() {
     } else {
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
-      setIsCompleted(false);
+      setScore(null);
+      setWrongWords([]);
+      
       try {
         recognitionRef.current?.start();
         setIsRecording(true);
@@ -85,13 +91,49 @@ export default function MainReader() {
     }
   };
 
+  // Hàm gọi API lấy phiên âm cực nhanh (chạy song song)
+  const fetchPhonetics = async (words: string[]) => {
+    const uniqueWords = Array.from(new Set(words));
+    const promises = uniqueWords.map(async (word) => {
+      try {
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+        if (res.ok) {
+          const data = await res.json();
+          const p = data[0]?.phonetics?.find((p: any) => p.text);
+          return { word, phonetic: p ? p.text : '' };
+        }
+      } catch (e) { /* Bỏ qua lỗi mạng */ }
+      return { word, phonetic: '' };
+    });
+    return Promise.all(promises);
+  };
+
   const analyzeResult = async (original: string, spoken: string) => {
+    // 1. Chấm điểm cơ bản
     const result = diffWords(original, spoken);
     setAnalyzedText(result);
     
-    const hasError = result.some(item => item.status === 'incorrect');
-    if (!hasError && spoken.trim().length > 0) {
-      setIsCompleted(true);
+    const totalWords = result.length;
+    const correctWords = result.filter(r => r.status === 'correct').length;
+    
+    // Tính phần trăm điểm
+    const currentScore = totalWords > 0 ? Math.round((correctWords / totalWords) * 100) : 0;
+    setScore(currentScore);
+
+    // 2. Trích xuất từ sai và lấy phiên âm
+    const incorrectCleanWords = result.filter(r => r.status === 'incorrect' && r.cleanWord).map(r => r.cleanWord);
+    if (incorrectCleanWords.length > 0) {
+      setIsFetchingPhonetics(true);
+      const phoneticsData = await fetchPhonetics(incorrectCleanWords);
+      setWrongWords(phoneticsData);
+      setIsFetchingPhonetics(false);
+    } else {
+      setWrongWords([]);
+    }
+
+    // 3. Xét duyệt qua bài (Ngưỡng 80%)
+    if (currentScore >= 80 && spoken.trim().length > 0) {
+      
       if (currentParagraph) {
         await fetch(`${BASE_URL}/records/${currentParagraph.id}`, {
           method: 'POST',
@@ -128,7 +170,9 @@ export default function MainReader() {
                           onClick={() => {
                             setCurrentParagraph(p); 
                             setAnalyzedText([]); 
-                            setIsCompleted(false); 
+                            setScore(null);
+                            setWrongWords([]);
+                           
                             setAttempts(0);
                           }} 
                           className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
@@ -169,14 +213,13 @@ export default function MainReader() {
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 focus:bg-white transition-all" 
                     value={userName} 
                     onChange={(e) => setUserName(e.target.value)} 
-                    disabled={isRecording || isCompleted} 
+                    disabled={isRecording} 
                   />
                 </div>
                 
                 <button 
                   onClick={toggleRecording} 
-                  disabled={isCompleted} 
-                  className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-white transition-all shadow-md active:scale-95 sm:min-w-[200px] ${isCompleted ? 'bg-slate-300 shadow-none cursor-not-allowed' : isRecording ? 'bg-rose-500 hover:bg-rose-600 hover:shadow-rose-500/25 animate-pulse' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-600/25'}`}
+                  className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-semibold text-white transition-all shadow-md active:scale-95 sm:min-w-[200px] ${isRecording ? 'bg-rose-500 hover:bg-rose-600 hover:shadow-rose-500/25 animate-pulse' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-blue-600/25'}`}
                 >
                   {isRecording ? (
                     <>
@@ -186,14 +229,33 @@ export default function MainReader() {
                   ) : (
                     <>
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                      Bắt Đầu Đọc
+                      {score !== null ? 'Đọc Lại Lần Nữa' : 'Bắt Đầu Đọc'}
                     </>
                   )}
                 </button>
               </div>
 
+              {/* Bảng Điểm Tóm Tắt (Chỉ hiện khi đã chấm điểm) */}
+              {score !== null && (
+                <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <div>
+                    <h3 className={`font-bold text-lg ${score >= 80 ? 'text-emerald-800' : 'text-amber-800'}`}>
+                      {score >= 80 ? '🎉 Đạt Yêu Cầu!' : '💪 Cần Cố Gắng Thêm!'}
+                    </h3>
+                    <p className={score >= 80 ? 'text-emerald-700' : 'text-amber-700'}>
+                      {score >= 80 ? 'Đã ghi nhận kết quả vào hệ thống.' : 'Hãy đọc lại để đạt trên 80% nhé.'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-4xl font-black ${score >= 80 ? 'text-emerald-600' : 'text-amber-500'}`}>
+                      {score}%
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Reading Area */}
-              <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700">
+              <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8">
                 {analyzedText.length > 0 ? (
                   <div className="space-x-1">
                     {analyzedText.map((item, i) => (
@@ -210,18 +272,28 @@ export default function MainReader() {
                 )}
               </div>
 
-              {/* Success Message */}
-              {isCompleted && (
-                <div className="mt-6 p-5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-4 animate-fade-in-up">
-                  <div className="bg-emerald-100 p-2 rounded-full mt-1">
-                    <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg text-emerald-800">Hoàn Thành Xuất Sắc!</h3>
-                    <p className="text-emerald-700 mt-1">Chúc mừng <strong className="font-semibold">{userName}</strong>, bạn đã phát âm chuẩn 100% đoạn văn này sau {attempts} lần thử.</p>
-                  </div>
+              {/* Phân tích từ sai và Phiên âm */}
+              {analyzedText.length > 0 && wrongWords.length > 0 && (
+                <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm">
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    Các từ cần cải thiện phát âm
+                  </h3>
+                  {isFetchingPhonetics ? (
+                    <div className="text-slate-500 text-sm animate-pulse">Đang tra cứu phiên âm...</div>
+                  ) : (
+                    <div className="flex flex-wrap gap-3">
+                      {wrongWords.map((item, i) => (
+                        <div key={i} className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-lg flex flex-col">
+                          <span className="font-bold text-rose-700">{item.word}</span>
+                          {item.phonetic && <span className="text-sm text-slate-500 font-mono">{item.phonetic}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
+
             </div>
           )}
         </div>
