@@ -13,10 +13,15 @@ declare global {
     webkitSpeechRecognition: any;
   }
 }
+
 export default function MainReader() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
+  
+  // State quản lý đoạn văn và bộ nhớ đệm (Cache) để tăng tốc web
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
+  const [paragraphCache, setParagraphCache] = useState<Record<number, Paragraph[]>>({});
+  const [isLoadingParagraphs, setIsLoadingParagraphs] = useState<boolean>(false);
   const [currentParagraph, setCurrentParagraph] = useState<Paragraph | null>(null);
 
   const [userName, setUserName] = useState<string>('');
@@ -27,14 +32,24 @@ export default function MainReader() {
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
   const [isFetchingPhonetics, setIsFetchingPhonetics] = useState<boolean>(false);
   
- 
   const [attempts, setAttempts] = useState<number>(0);
 
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
 
+  // Khởi tạo Speech API và tải danh sách bài đọc (có lưu Cache)
   useEffect(() => {
-    fetch(`${BASE_URL}/articles`).then(res => res.json()).then(data => setArticles(data));
+    const cachedArticles = sessionStorage.getItem('articles');
+    if (cachedArticles) {
+      setArticles(JSON.parse(cachedArticles));
+    } else {
+      fetch(`${BASE_URL}/articles`)
+        .then(res => res.json())
+        .then(data => {
+          setArticles(data);
+          sessionStorage.setItem('articles', JSON.stringify(data));
+        });
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -63,10 +78,32 @@ export default function MainReader() {
     }
   }, [currentParagraph]);
 
-  const handleSelectArticle = (articleId: number) => {
+  // Xử lý chọn bài đọc (Tích hợp Cache & Loading Spinner)
+  const handleSelectArticle = async (articleId: number) => {
     setSelectedArticleId(articleId);
-    setCurrentParagraph(null);
-    fetch(`${BASE_URL}/articles/${articleId}/paragraphs`).then(res => res.json()).then(data => setParagraphs(data));
+    setCurrentParagraph(null); 
+    setScore(null);
+    setAnalyzedText([]);
+    setWrongWords([]);
+
+    // Lấy từ Cache nếu đã tải trước đó (Tốc độ ánh sáng)
+    if (paragraphCache[articleId]) {
+      setParagraphs(paragraphCache[articleId]);
+      return;
+    }
+
+    setIsLoadingParagraphs(true);
+    try {
+      const res = await fetch(`${BASE_URL}/articles/${articleId}/paragraphs`);
+      const data = await res.json();
+      setParagraphs(data);
+      // Lưu vào Cache
+      setParagraphCache(prev => ({ ...prev, [articleId]: data }));
+    } catch (error) {
+      console.error("Lỗi tải đoạn văn", error);
+    } finally {
+      setIsLoadingParagraphs(false);
+    }
   };
 
   const toggleRecording = () => {
@@ -81,7 +118,6 @@ export default function MainReader() {
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
-      
       try {
         recognitionRef.current?.start();
         setIsRecording(true);
@@ -91,7 +127,6 @@ export default function MainReader() {
     }
   };
 
-  // Hàm gọi API lấy phiên âm cực nhanh (chạy song song)
   const fetchPhonetics = async (words: string[]) => {
     const uniqueWords = Array.from(new Set(words));
     const promises = uniqueWords.map(async (word) => {
@@ -102,25 +137,22 @@ export default function MainReader() {
           const p = data[0]?.phonetics?.find((p: any) => p.text);
           return { word, phonetic: p ? p.text : '' };
         }
-      } catch (e) { /* Bỏ qua lỗi mạng */ }
+      } catch (e) { /* Ignore API errors */ }
       return { word, phonetic: '' };
     });
     return Promise.all(promises);
   };
 
   const analyzeResult = async (original: string, spoken: string) => {
-    // 1. Chấm điểm cơ bản
     const result = diffWords(original, spoken);
     setAnalyzedText(result);
     
     const totalWords = result.length;
     const correctWords = result.filter(r => r.status === 'correct').length;
     
-    // Tính phần trăm điểm
     const currentScore = totalWords > 0 ? Math.round((correctWords / totalWords) * 100) : 0;
     setScore(currentScore);
 
-    // 2. Trích xuất từ sai và lấy phiên âm
     const incorrectCleanWords = result.filter(r => r.status === 'incorrect' && r.cleanWord).map(r => r.cleanWord);
     if (incorrectCleanWords.length > 0) {
       setIsFetchingPhonetics(true);
@@ -131,9 +163,7 @@ export default function MainReader() {
       setWrongWords([]);
     }
 
-    // 3. Xét duyệt qua bài (Ngưỡng 80%)
     if (currentScore >= 80 && spoken.trim().length > 0) {
-      
       if (currentParagraph) {
         await fetch(`${BASE_URL}/records/${currentParagraph.id}`, {
           method: 'POST',
@@ -146,7 +176,7 @@ export default function MainReader() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Sidebar - Menu chọn bài */}
+      {/* Sidebar */}
       <div className="lg:col-span-1">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 lg:sticky lg:top-24">
           <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -164,23 +194,29 @@ export default function MainReader() {
                 </button>
                 {selectedArticleId === a.id && (
                   <ul className="mt-2 ml-4 space-y-1 relative before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-blue-100">
-                    {Array.isArray(paragraphs) && paragraphs.map((p, idx) => (
-                      <li key={p.id} className="relative">
-                        <button 
-                          onClick={() => {
-                            setCurrentParagraph(p); 
-                            setAnalyzedText([]); 
-                            setScore(null);
-                            setWrongWords([]);
-                           
-                            setAttempts(0);
-                          }} 
-                          className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
-                        >
-                          Đoạn {idx + 1}
-                        </button>
-                      </li>
-                    ))}
+                    {/* Hiệu ứng Đang tải */}
+                    {isLoadingParagraphs ? (
+                       <li className="text-sm text-blue-500 p-2 italic animate-pulse font-medium">
+                         Đang tải đoạn văn...
+                       </li>
+                    ) : (
+                      Array.isArray(paragraphs) && paragraphs.map((p, idx) => (
+                        <li key={p.id} className="relative">
+                          <button 
+                            onClick={() => {
+                              setCurrentParagraph(p); 
+                              setAnalyzedText([]); 
+                              setScore(null);
+                              setWrongWords([]);
+                              setAttempts(0);
+                            }} 
+                            className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
+                          >
+                            Đoạn {idx + 1}
+                          </button>
+                        </li>
+                      ))
+                    )}
                   </ul>
                 )}
               </li>
@@ -189,7 +225,7 @@ export default function MainReader() {
         </div>
       </div>
 
-      {/* Main Content - Khu vực đọc */}
+      {/* Main Content */}
       <div className="lg:col-span-3">
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col">
           {!currentParagraph ? (
@@ -235,7 +271,7 @@ export default function MainReader() {
                 </button>
               </div>
 
-              {/* Bảng Điểm Tóm Tắt (Chỉ hiện khi đã chấm điểm) */}
+              {/* Bảng Điểm Tóm Tắt */}
               {score !== null && (
                 <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div>
@@ -274,7 +310,7 @@ export default function MainReader() {
 
               {/* Phân tích từ sai và Phiên âm */}
               {analyzedText.length > 0 && wrongWords.length > 0 && (
-                <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm">
+                 <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm">
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     Các từ cần cải thiện phát âm
