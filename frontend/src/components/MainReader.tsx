@@ -16,6 +16,9 @@ declare global {
 
 export default function MainReader() {
   const [articles, setArticles] = useState<Article[]>([]);
+  // STATE MỚI: Theo dõi việc tải danh sách bài đọc ban đầu
+  const [isLoadingArticles, setIsLoadingArticles] = useState<boolean>(true);
+  
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
   
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
@@ -32,21 +35,25 @@ export default function MainReader() {
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
   const [userTranscript, setUserTranscript] = useState<string>('');
   
-  // Dùng useRef để quản lý số lần thử giúp tránh lỗi state bị cũ (stale state)
   const attemptsRef = useRef<number>(0);
-
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
   const interimTranscriptRef = useRef<string>('');
 
   useEffect(() => {
+    // Bật Loading khi mới vào web
+    setIsLoadingArticles(true);
     fetch(`${BASE_URL}/articles`)
       .then(res => res.json())
-      .then(data => setArticles(data))
-      .catch(err => console.error("Lỗi tải danh sách bài:", err));
+      .then(data => {
+        setArticles(data);
+      })
+      .catch(err => console.error("Lỗi tải danh sách bài:", err))
+      .finally(() => {
+        setIsLoadingArticles(false); // Tắt loading khi tải xong (kể cả lỗi hay thành công)
+      });
   }, []);
 
-  // Hàm dọn dẹp sạch sẽ Micro (Tránh rác phần cứng)
   const forceStopAndCleanMic = () => {
     if (recognitionRef.current) {
       recognitionRef.current.onend = null;
@@ -89,15 +96,12 @@ export default function MainReader() {
   };
 
   const triggerGrading = (originalText: string, paragraphId: number) => {
-    // Ghép chữ đã chốt + chữ nói dở thành đoạn văn hoàn chỉnh
     const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
-
     if (fullSpokenText.length === 0) {
       setIsGrading(false);
       alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to hơn nhé!");
       return;
     }
-
     analyzeResult(originalText, fullSpokenText, paragraphId);
   };
 
@@ -110,18 +114,13 @@ export default function MainReader() {
       return;
     }
 
-    // 1. NẾU ĐANG GHI ÂM -> BẤM DỪNG
     if (isRecording) {
-      setIsGrading(true); // Bật loading ngay lập tức
-      
+      setIsGrading(true); 
       if (recognitionRef.current) {
-        recognitionRef.current.stop(); // Báo Chrome dừng lại nhẹ nhàng
+        recognitionRef.current.stop(); 
         
-        // CƠ CHẾ BẢO VỆ CHỐNG TREO WEB (ZOMBIE KILLER):
-        // Nếu sau 1.5 giây mà Chrome bị đơ không chịu trả kết quả, ép thu hồi và chấm điểm luôn!
         setTimeout(() => {
           if (recognitionRef.current) {
-            console.log("Ép chấm điểm do Chrome phản hồi chậm...");
             forceStopAndCleanMic();
             setIsGrading(true);
             if (currentParagraph) {
@@ -133,10 +132,8 @@ export default function MainReader() {
         }, 1500);
       }
     } 
-    // 2. NẾU CHƯA GHI ÂM -> BẮT ĐẦU
     else {
       forceStopAndCleanMic();
-
       finalTranscriptRef.current = '';
       interimTranscriptRef.current = '';
       setAnalyzedText([]);
@@ -179,7 +176,6 @@ export default function MainReader() {
       };
 
       recognition.onend = () => {
-        // Hàm này tự chạy khi user bấm Ngừng, HOẶC Chrome tự động ngắt do user im lặng
         recognitionRef.current = null;
         setIsRecording(false);
         setIsGrading(true);
@@ -242,7 +238,7 @@ export default function MainReader() {
       }
 
       if (currentScore >= 80) {
-        attemptsRef.current += 1; // Tăng lượt nộp bài thành công
+        attemptsRef.current += 1;
         await fetch(`${BASE_URL}/records/${paragraphId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -264,44 +260,57 @@ export default function MainReader() {
             <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
             Thư viện bài đọc
           </h2>
+          
           <ul className="space-y-2 max-h-[40vh] lg:max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
-            {Array.isArray(articles) && articles.map(a => (
-              <li key={a.id}>
-                <button 
-                  onClick={() => handleSelectArticle(a.id)} 
-                  className={`w-full text-left px-4 py-3 rounded-xl transition-all duration-200 ${selectedArticleId === a.id ? 'bg-blue-50 text-blue-700 font-semibold shadow-inner border border-blue-100' : 'text-slate-600 hover:bg-slate-50 border border-transparent'}`}
-                >
-                  {a.title}
-                </button>
-                {selectedArticleId === a.id && (
-                  <ul className="mt-2 ml-4 space-y-1 relative before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-blue-100">
-                    {isLoadingParagraphs ? (
-                       <li className="text-sm text-blue-500 p-2 italic animate-pulse font-medium">Đang tải đoạn văn...</li>
-                    ) : (
-                      Array.isArray(paragraphs) && paragraphs.map((p, idx) => (
-                        <li key={p.id} className="relative">
-                          <button 
-                            onClick={() => {
-                              forceStopAndCleanMic();
-                              setIsGrading(false);
-                              setCurrentParagraph(p); 
-                              setAnalyzedText([]); 
-                              setScore(null);
-                              setWrongWords([]);
-                              setUserTranscript('');
-                              attemptsRef.current = 0; // Reset số lần đếm
-                            }} 
-                            className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
-                          >
-                            Đoạn {idx + 1}
-                          </button>
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                )}
+            {/* THÊM 3 TRẠNG THÁI HIỂN THỊ Ở ĐÂY */}
+            {isLoadingArticles ? (
+              <li className="text-sm text-blue-600 p-4 text-center border border-blue-100 bg-blue-50 rounded-xl animate-pulse flex flex-col items-center gap-2">
+                <div className="w-5 h-5 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+                <span>Đang kết nối Server...<br/>(Lần đầu có thể mất ~50s)</span>
               </li>
-            ))}
+            ) : articles.length === 0 ? (
+              <li className="text-sm text-slate-500 p-4 text-center border border-slate-100 bg-slate-50 rounded-xl italic">
+                Chưa có bài đọc nào. Bạn hãy vào trang Quản Trị Viên để thêm bài mới nhé!
+              </li>
+            ) : (
+              Array.isArray(articles) && articles.map(a => (
+                <li key={a.id}>
+                  <button 
+                    onClick={() => handleSelectArticle(a.id)} 
+                    className={`w-full text-left px-4 py-3 rounded-xl transition-all duration-200 ${selectedArticleId === a.id ? 'bg-blue-50 text-blue-700 font-semibold shadow-inner border border-blue-100' : 'text-slate-600 hover:bg-slate-50 border border-transparent'}`}
+                  >
+                    {a.title}
+                  </button>
+                  {selectedArticleId === a.id && (
+                    <ul className="mt-2 ml-4 space-y-1 relative before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-blue-100">
+                      {isLoadingParagraphs ? (
+                        <li className="text-sm text-blue-500 p-2 italic animate-pulse font-medium">Đang tải đoạn văn...</li>
+                      ) : (
+                        Array.isArray(paragraphs) && paragraphs.map((p, idx) => (
+                          <li key={p.id} className="relative">
+                            <button 
+                              onClick={() => {
+                                forceStopAndCleanMic();
+                                setIsGrading(false);
+                                setCurrentParagraph(p); 
+                                setAnalyzedText([]); 
+                                setScore(null);
+                                setWrongWords([]);
+                                setUserTranscript('');
+                                attemptsRef.current = 0;
+                              }} 
+                              className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
+                            >
+                              Đoạn {idx + 1}
+                            </button>
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  )}
+                </li>
+              ))
+            )}
           </ul>
         </div>
       </div>
