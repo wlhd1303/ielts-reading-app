@@ -33,12 +33,20 @@ export default function MainReader() {
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
   const [userTranscript, setUserTranscript] = useState<string>('');
   
+  const currentParagraphRef = useRef<Paragraph | null>(null);
+  const userNameRef = useRef<string>('');
   const attemptsRef = useRef<number>(0);
+  
+  // 3 biến Ref quản lý chặt chẽ để diệt lỗi Android
   const recognitionRef = useRef<any>(null);
+  const pastSessionsStrRef = useRef<string>(''); 
   const finalTranscriptRef = useRef<string>('');
   
   const isStoppingRef = useRef<boolean>(false);
   const stopTimeoutRef = useRef<any>(null);
+
+  useEffect(() => { currentParagraphRef.current = currentParagraph; }, [currentParagraph]);
+  useEffect(() => { userNameRef.current = userName; }, [userName]);
 
   useEffect(() => {
     setIsLoadingArticles(true);
@@ -50,6 +58,7 @@ export default function MainReader() {
   }, []);
 
   const forceStopAndCleanMic = () => {
+    isStoppingRef.current = true; 
     if (recognitionRef.current) {
       recognitionRef.current.onend = null;
       recognitionRef.current.onstart = null;
@@ -91,16 +100,81 @@ export default function MainReader() {
     }
   };
 
-  const triggerGrading = (originalText: string, paragraphId: number) => {
-    const fullSpokenText = finalTranscriptRef.current.trim();
-    if (fullSpokenText.length === 0) {
+  const startListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = true; 
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsRecording(true);
+
+    recognition.onerror = (event: any) => {
+      console.error("Lỗi Micro:", event.error);
+      if (event.error === 'not-allowed') {
+        forceStopAndCleanMic();
+        setIsGrading(false);
+        setTimeout(() => alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!"), 100);
+      }
+    };
+
+    recognition.onresult = (event: any) => {
+      let sessionStr = '';
+      for (let i = 0; i < event.results.length; ++i) {
+        sessionStr += event.results[i][0].transcript;
+      }
+
+      // THUẬT TOÁN KHỬ TRÙNG LẶP ANDROID BUG
+      // Chuẩn hóa chuỗi (chỉ giữ lại chữ và số) để so sánh chính xác tuyệt đối
+      const normalize = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const pastNorm = normalize(pastSessionsStrRef.current);
+      const sessionNorm = normalize(sessionStr);
+
+      if (pastNorm && sessionNorm.startsWith(pastNorm)) {
+        // Điện thoại bê nguyên đoạn cũ gửi lại -> Chỉ lấy bản cập nhật mới nhất
+        finalTranscriptRef.current = sessionStr.trim();
+      } else if (pastNorm && pastNorm.endsWith(sessionNorm)) {
+        // Lỗi tiếng vọng (Chỉ trả về vài chữ cuối) -> Giữ nguyên bản gốc
+        finalTranscriptRef.current = pastSessionsStrRef.current;
+      } else {
+        // Nếu là chữ hoàn toàn mới -> Nối vào an toàn
+        finalTranscriptRef.current = (pastSessionsStrRef.current + ' ' + sessionStr).trim();
+      }
+    };
+
+    recognition.onend = () => {
+      // Lưu lại văn bản đã chốt trước khi sang phiên mới
+      pastSessionsStrRef.current = finalTranscriptRef.current;
+
+      if (!isStoppingRef.current) {
+        // Tự động kích hoạt lại Micro để tạo luồng thu âm liên tục không giới hạn
+        try { recognition.start(); } catch (e) { console.error("Không thể restart Mic", e); }
+      } 
+      else {
+        clearTimeout(stopTimeoutRef.current); 
+        recognitionRef.current = null;
+        setIsRecording(false);
+        
+        const fullSpokenText = finalTranscriptRef.current.trim();
+
+        if (fullSpokenText.length > 0 && currentParagraphRef.current) {
+          analyzeResult(currentParagraphRef.current.content, fullSpokenText, currentParagraphRef.current.id);
+        } else {
+          setIsGrading(false);
+          setTimeout(() => {
+            alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro hoặc đọc to tiếng Anh hơn nhé!");
+          }, 100);
+        }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try { recognition.start(); } catch (err) {
+      console.error("Lỗi khởi động Micro:", err);
+      forceStopAndCleanMic();
       setIsGrading(false);
-      setTimeout(() => {
-        alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to tiếng Anh hơn nhé!");
-      }, 100);
-      return;
     }
-    analyzeResult(originalText, fullSpokenText, paragraphId);
   };
 
   const toggleRecording = () => {
@@ -118,10 +192,8 @@ export default function MainReader() {
       
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch(e) {}
-        
         stopTimeoutRef.current = setTimeout(() => {
           if (isStoppingRef.current && recognitionRef.current) {
-            console.log("Ép ngắt kết nối do Chrome phản hồi chậm...");
             try { recognitionRef.current.abort(); } catch(e){}
           }
         }, 1500);
@@ -132,89 +204,14 @@ export default function MainReader() {
       clearTimeout(stopTimeoutRef.current);
       isStoppingRef.current = false;
       
+      pastSessionsStrRef.current = '';
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
       setUserTranscript('');
       
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US'; 
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1; // Tối ưu tốc độ lấy kết quả
-
-      recognition.onstart = () => setIsRecording(true);
-      
-      recognition.onerror = (event: any) => {
-        console.error("Lỗi Micro:", event.error);
-        if (event.error === 'not-allowed') {
-          forceStopAndCleanMic();
-          setIsGrading(false);
-          setTimeout(() => alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!"), 100);
-          return;
-        }
-        if (isStoppingRef.current) return; 
-
-        forceStopAndCleanMic();
-        setIsGrading(false);
-        if (event.error === 'network') {
-          setTimeout(() => alert("Mạng không ổn định khiến Micro bị ngắt. Hãy thử đọc lại nhé!"), 100);
-        }
-      };
-
-      recognition.onresult = (event: any) => {
-        let fullText = '';
-        
-        // VÁ LỖI LẶP TỪ (ANDROID BUG): Khử trùng lặp thông minh
-        for (let i = 0; i < event.results.length; ++i) {
-            let transcript = event.results[i][0].transcript;
-            
-            // Xóa dấu câu và khoảng trắng để so sánh chính xác
-            let cleanFull = fullText.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            let cleanTrans = transcript.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            
-            // Nếu đoạn chữ mới gửi lên CÓ CHỨA đoạn chữ cũ -> Android đang bị lặp -> Ghi đè!
-            if (cleanFull.length > 0 && cleanTrans.startsWith(cleanFull)) {
-                fullText = transcript;
-            } else {
-                // Nếu không chứa -> PC gửi đúng từng chữ -> Nối vào!
-                fullText += (fullText.endsWith(' ') || transcript.startsWith(' ') || fullText === '' ? '' : ' ') + transcript;
-            }
-        }
-        
-        finalTranscriptRef.current = fullText;
-      };
-
-      recognition.onend = () => {
-        clearTimeout(stopTimeoutRef.current); 
-        recognitionRef.current = null;
-        setIsRecording(false);
-        
-        const fullSpokenText = finalTranscriptRef.current.trim();
-
-        if (fullSpokenText.length > 0 && currentParagraph) {
-          triggerGrading(currentParagraph.content, currentParagraph.id);
-        } else {
-          setIsGrading(false);
-          if (isStoppingRef.current) {
-            setTimeout(() => {
-              alert("Lỗi kết nối hoặc Micro không nhận âm thanh. Hãy thử lại nhé!");
-            }, 100);
-          }
-        }
-        isStoppingRef.current = false; 
-      };
-
-      recognitionRef.current = recognition;
-
-      try {
-        recognition.start();
-      } catch (err) {
-        console.error("Lỗi khởi động Micro:", err);
-        forceStopAndCleanMic();
-        setIsGrading(false);
-      }
+      startListening();
     }
   };
 
@@ -262,7 +259,7 @@ export default function MainReader() {
         await fetch(`${BASE_URL}/records/${paragraphId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userName, attempts: attemptsRef.current })
+          body: JSON.stringify({ userName: userNameRef.current, attempts: attemptsRef.current })
         });
       }
     } catch (error) {
