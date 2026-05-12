@@ -96,9 +96,8 @@ export default function MainReader() {
     const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
     if (fullSpokenText.length === 0) {
       setIsGrading(false);
-      // VÁ LỖI TREO UI: Trì hoãn alert 100ms để React kịp xóa giao diện Loading
       setTimeout(() => {
-        alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to hơn nhé!");
+        alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to tiếng Anh hơn nhé!");
       }, 100);
       return;
     }
@@ -142,30 +141,26 @@ export default function MainReader() {
       setUserTranscript('');
       
       const recognition = new SpeechRecognition();
-      recognition.lang = 'en-US';
+      recognition.lang = 'en-US'; 
       recognition.continuous = true;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1; // TỐI ƯU HIỆU NĂNG: Ép trình duyệt trả kết quả nhanh nhất và chuẩn xác nhất
 
       recognition.onstart = () => setIsRecording(true);
       
       recognition.onerror = (event: any) => {
         console.error("Lỗi Micro:", event.error);
-        
         if (event.error === 'not-allowed') {
           forceStopAndCleanMic();
           setIsGrading(false);
           setTimeout(() => alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!"), 100);
           return;
         }
-        
-        if (isStoppingRef.current) {
-          return; 
-        }
+        if (isStoppingRef.current) return; 
 
         forceStopAndCleanMic();
         setIsGrading(false);
         if (event.error === 'network') {
-          // VÁ LỖI TREO UI
           setTimeout(() => alert("Mạng không ổn định khiến Micro bị ngắt. Hãy thử đọc lại nhé!"), 100);
         }
       };
@@ -174,7 +169,8 @@ export default function MainReader() {
         let finalChunk = '';
         let interimChunk = '';
         
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        // SỬA LỖI LẶP TỪ: Quét lại toàn bộ mảng kết quả từ vị trí số 0 để lấy nguyên câu sạch sẽ nhất
+        for (let i = 0; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalChunk += event.results[i][0].transcript + ' ';
           } else {
@@ -182,9 +178,8 @@ export default function MainReader() {
           }
         }
         
-        if (finalChunk) {
-          finalTranscriptRef.current += finalChunk;
-        }
+        // Cập nhật lại toàn bộ đoạn văn (Tuyệt đối không dùng += ở đây để tránh bị Chrome lặp chữ)
+        finalTranscriptRef.current = finalChunk;
         interimTranscriptRef.current = interimChunk;
       };
 
@@ -200,13 +195,11 @@ export default function MainReader() {
         } else {
           setIsGrading(false);
           if (isStoppingRef.current) {
-            // VÁ LỖI TREO UI 
             setTimeout(() => {
-              alert("Lỗi kết nối mạng đã làm mất dữ liệu ghi âm. Hãy thử đọc lại lần nữa nhé!");
+              alert("Lỗi kết nối hoặc Micro không nhận âm thanh. Hãy thử lại nhé!");
             }, 100);
           }
         }
-        
         isStoppingRef.current = false; 
       };
 
@@ -387,17 +380,18 @@ export default function MainReader() {
                 </div>
               )}
 
-              {!isGrading && userTranscript && (
+              {/* Vẫn giữ lại phần "Hệ thống ghi nhận được" (hiện ra sau khi chấm điểm) để học viên đối chiếu, theo đúng code cũ */}
+              {!isGrading && userTranscript && !isRecording && (
                 <div className="mb-6 p-5 rounded-xl bg-slate-50 border border-slate-200 border-l-4 border-l-blue-500 animate-fade-in-up w-full overflow-hidden">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                    Hệ thống nghe được:
+                    Hệ thống ghi nhận được:
                   </h4>
                   <p className="text-slate-800 italic text-lg break-words whitespace-pre-wrap">"{userTranscript}"</p>
                 </div>
               )}
 
-              {!isGrading && score !== null && (
+              {!isGrading && score !== null && !isRecording && (
                 <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border animate-fade-in-up w-full ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div className="flex-1 pr-4">
                     <h3 className={`font-bold text-lg ${score >= 80 ? 'text-emerald-800' : 'text-amber-800'}`}>{score >= 80 ? '🎉 Đạt Yêu Cầu!' : '💪 Cần Cố Gắng Thêm!'}</h3>
@@ -408,18 +402,18 @@ export default function MainReader() {
               )}
 
               <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8 w-full overflow-hidden break-words whitespace-pre-wrap">
-                {analyzedText.length > 0 && !isGrading ? (
+                {analyzedText.length > 0 && !isGrading && !isRecording ? (
                   <div className="space-x-1 inline">
                     {analyzedText.map((item, i) => (
                       <span key={i} className={`transition-colors duration-300 inline-block ${item.status === 'correct' ? 'text-slate-800' : 'text-rose-600 font-semibold bg-rose-100/50 border-b-2 border-rose-300 rounded-sm px-1 mb-1'}`}>{item.originalWord}</span>
                     ))}
                   </div>
                 ) : (
-                  <p className={isGrading ? "opacity-50" : ""}>{currentParagraph.content}</p>
+                  <p className={isGrading || isRecording ? "opacity-50" : ""}>{currentParagraph.content}</p>
                 )}
               </div>
 
-              {!isGrading && analyzedText.length > 0 && wrongWords.length > 0 && (
+              {!isGrading && analyzedText.length > 0 && wrongWords.length > 0 && !isRecording && (
                  <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm animate-fade-in w-full">
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
