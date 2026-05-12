@@ -30,11 +30,14 @@ export default function MainReader() {
   const [analyzedText, setAnalyzedText] = useState<DiffResult[]>([]);
   const [score, setScore] = useState<number | null>(null);
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
-  
+  const [userTranscript, setUserTranscript] = useState<string>('');
   const [attempts, setAttempts] = useState<number>(0);
 
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
+  
+  // TÍNH NĂNG MỚI: Người gác cổng để biết user chủ động dừng hay bị Chrome ngắt
+  const isManualStopRef = useRef<boolean>(false);
 
   useEffect(() => {
     fetch(`${BASE_URL}/articles`)
@@ -43,15 +46,13 @@ export default function MainReader() {
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
   }, []);
 
-  // Hàm dọn dẹp Micro triệt để
   const forceStopAndCleanMic = () => {
+    isManualStopRef.current = true; // Ép dừng
     if (recognitionRef.current) {
       recognitionRef.current.onend = null;
       recognitionRef.current.onstart = null;
       recognitionRef.current.onerror = null;
-      try {
-        recognitionRef.current.abort();
-      } catch (e) {}
+      try { recognitionRef.current.abort(); } catch (e) {}
       recognitionRef.current = null;
     }
     setIsRecording(false);
@@ -66,6 +67,7 @@ export default function MainReader() {
     setScore(null);
     setAnalyzedText([]);
     setWrongWords([]);
+    setUserTranscript('');
 
     if (paragraphCache[articleId]) {
       setParagraphs(paragraphCache[articleId]);
@@ -95,18 +97,20 @@ export default function MainReader() {
     }
 
     if (isRecording) {
-      // Hiện Loading ngay lập tức khi bấm dừng
+      // User ĐÍCH THÂN bấm dừng
+      isManualStopRef.current = true;
       setIsGrading(true); 
       if (recognitionRef.current) recognitionRef.current.stop();
       setAttempts(prev => prev + 1);
     } else {
-      // Dọn dẹp sạch sẽ Micro cũ nếu có trước khi "Đọc lại lần nữa"
       forceStopAndCleanMic();
 
+      isManualStopRef.current = false; // Bắt đầu trạng thái thu âm tự do
       finalTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
+      setUserTranscript('');
       
       const recognition = new SpeechRecognition();
       recognition.lang = 'en-US';
@@ -116,12 +120,14 @@ export default function MainReader() {
       recognition.onstart = () => setIsRecording(true);
       
       recognition.onerror = (event: any) => {
-        console.error("Lỗi Micro:", event.error);
-        setIsRecording(false);
-        setIsGrading(false);
         if (event.error === 'not-allowed') {
+          console.error("Lỗi Micro:", event.error);
+          setIsRecording(false);
+          setIsGrading(false);
           alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
+          isManualStopRef.current = true;
         }
+        // Bỏ qua các lỗi lặt vặt khác để mic tự động phục hồi
       };
 
       recognition.onresult = (event: any) => {
@@ -132,18 +138,31 @@ export default function MainReader() {
           }
         }
         if (currentTranscript) {
+          // Nối chữ liên tục vào bộ nhớ
           finalTranscriptRef.current += currentTranscript;
         }
       };
 
       recognition.onend = () => {
+        // KIỂM TRA: Ai là người tắt Mic?
+        if (!isManualStopRef.current) {
+          // Nếu Chrome tự tắt (do im lặng quá 5s) -> Bật lại lập tức để "tiếp sức"!
+          try {
+            recognition.start();
+            return; // Dừng việc chấm điểm lại
+          } catch (e) {
+            console.error("Không thể tự động bật lại mic", e);
+          }
+        }
+
+        // Nếu isManualStopRef = true (User tự bấm Ngừng), mới đi chấm điểm
         setIsRecording(false);
         if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
           analyzeResult(currentParagraph.content, finalTranscriptRef.current);
         } else {
           setIsGrading(false); 
           if (finalTranscriptRef.current.trim().length === 0) {
-             alert("Hệ thống chưa nghe được bạn nói gì. Hãy bấm đọc lại và nói to hơn nhé!");
+             alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra lại Micro nhé!");
           }
         }
       };
@@ -178,8 +197,9 @@ export default function MainReader() {
 
   const analyzeResult = async (original: string, spoken: string) => {
     setIsGrading(true);
+    setUserTranscript(spoken);
+    
     try {
-      // Fake delay nhẹ để người dùng cảm thấy hệ thống đang làm việc
       await new Promise(resolve => setTimeout(resolve, 800));
 
       const result = diffWords(original, spoken);
@@ -216,7 +236,6 @@ export default function MainReader() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Sidebar chọn bài */}
       <div className="lg:col-span-1">
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 lg:sticky lg:top-24">
           <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -246,6 +265,7 @@ export default function MainReader() {
                               setAnalyzedText([]); 
                               setScore(null);
                               setWrongWords([]);
+                              setUserTranscript('');
                               setAttempts(0);
                             }} 
                             className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
@@ -263,9 +283,8 @@ export default function MainReader() {
         </div>
       </div>
 
-      {/* Khu vực đọc chính */}
       <div className="lg:col-span-3">
-        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col">
+        <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm border border-slate-100 min-h-[60vh] flex flex-col w-full overflow-hidden">
           {!currentParagraph ? (
             <div className="flex-1 flex flex-col items-center justify-center text-slate-400 space-y-4">
               <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center">
@@ -274,7 +293,7 @@ export default function MainReader() {
               <p className="text-lg text-center px-4">Hãy chọn một đoạn văn bên trái để bắt đầu luyện tập</p>
             </div>
           ) : (
-            <div className="animate-fade-in flex-1">
+            <div className="animate-fade-in flex-1 w-full max-w-full">
               <div className="flex flex-col sm:flex-row gap-4 mb-8">
                 <div className="relative flex-1">
                   <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -305,7 +324,6 @@ export default function MainReader() {
                 </button>
               </div>
 
-              {/* THANH LOADING HIỆN TỨC THÌ */}
               {isGrading && (
                 <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
                   <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
@@ -313,21 +331,33 @@ export default function MainReader() {
                 </div>
               )}
 
-              {!isGrading && score !== null && (
-                <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border animate-fade-in-up ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-                  <div>
-                    <h3 className={`font-bold text-lg ${score >= 80 ? 'text-emerald-800' : 'text-amber-800'}`}>{score >= 80 ? '🎉 Đạt Yêu Cầu!' : '💪 Cần Cố Gắng Thêm!'}</h3>
-                    <p className={score >= 80 ? 'text-emerald-700' : 'text-amber-700'}>{score >= 80 ? 'Đã ghi nhận kết quả vào hệ thống.' : 'Hãy đọc lại để đạt trên 80% nhé.'}</p>
-                  </div>
-                  <div className={`text-4xl font-black ${score >= 80 ? 'text-emerald-600' : 'text-amber-500'}`}>{score}%</div>
+              {!isGrading && userTranscript && (
+                <div className="mb-6 p-5 rounded-xl bg-slate-50 border border-slate-200 border-l-4 border-l-blue-500 animate-fade-in-up w-full overflow-hidden">
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                    Hệ thống nghe được:
+                  </h4>
+                  {/* FIX RESPONSIVE: break-words giúp ép chữ dài tự xuống dòng */}
+                  <p className="text-slate-800 italic text-lg break-words whitespace-pre-wrap">"{userTranscript}"</p>
                 </div>
               )}
 
-              <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8">
+              {!isGrading && score !== null && (
+                <div className={`mb-6 p-4 rounded-xl flex items-center justify-between border animate-fade-in-up w-full ${score >= 80 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <div className="flex-1 pr-4">
+                    <h3 className={`font-bold text-lg ${score >= 80 ? 'text-emerald-800' : 'text-amber-800'}`}>{score >= 80 ? '🎉 Đạt Yêu Cầu!' : '💪 Cần Cố Gắng Thêm!'}</h3>
+                    <p className={`text-sm sm:text-base ${score >= 80 ? 'text-emerald-700' : 'text-amber-700'}`}>{score >= 80 ? 'Đã ghi nhận kết quả vào hệ thống.' : 'Hãy đọc lại để đạt trên 80% nhé.'}</p>
+                  </div>
+                  <div className={`text-3xl sm:text-4xl font-black ${score >= 80 ? 'text-emerald-600' : 'text-amber-500'}`}>{score}%</div>
+                </div>
+              )}
+
+              {/* FIX RESPONSIVE KHUNG ĐỌC: break-words giúp không bị tràn chữ ngang ra ngoài */}
+              <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8 w-full overflow-hidden break-words whitespace-pre-wrap">
                 {analyzedText.length > 0 && !isGrading ? (
-                  <div className="space-x-1">
+                  <div className="space-x-1 inline">
                     {analyzedText.map((item, i) => (
-                      <span key={i} className={`transition-colors duration-300 ${item.status === 'correct' ? 'text-slate-800' : 'text-rose-600 font-semibold bg-rose-100/50 border-b-2 border-rose-300 rounded-sm px-1'}`}>{item.originalWord}</span>
+                      <span key={i} className={`transition-colors duration-300 inline-block ${item.status === 'correct' ? 'text-slate-800' : 'text-rose-600 font-semibold bg-rose-100/50 border-b-2 border-rose-300 rounded-sm px-1 mb-1'}`}>{item.originalWord}</span>
                     ))}
                   </div>
                 ) : (
@@ -336,15 +366,15 @@ export default function MainReader() {
               </div>
 
               {!isGrading && analyzedText.length > 0 && wrongWords.length > 0 && (
-                 <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm animate-fade-in">
+                 <div className="bg-white border border-rose-100 rounded-2xl p-6 shadow-sm animate-fade-in w-full">
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                     <svg className="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                     Các từ cần cải thiện phát âm
                   </h3>
                   <div className="flex flex-wrap gap-3">
                     {wrongWords.map((item, i) => (
-                      <div key={i} className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-lg flex flex-col">
-                        <span className="font-bold text-rose-700">{item.word}</span>
+                      <div key={i} className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-lg flex flex-col max-w-full overflow-hidden">
+                        <span className="font-bold text-rose-700 truncate">{item.word}</span>
                         {item.phonetic && <span className="text-sm text-slate-500 font-mono">{item.phonetic}</span>}
                       </div>
                     ))}
