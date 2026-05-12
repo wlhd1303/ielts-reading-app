@@ -38,7 +38,6 @@ export default function MainReader() {
   const finalTranscriptRef = useRef<string>('');
   const interimTranscriptRef = useRef<string>('');
   
-  // 2 Biến mới để trị lỗi Network và chống Treo Web
   const isStoppingRef = useRef<boolean>(false);
   const stopTimeoutRef = useRef<any>(null);
 
@@ -97,7 +96,10 @@ export default function MainReader() {
     const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
     if (fullSpokenText.length === 0) {
       setIsGrading(false);
-      alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to hơn nhé!");
+      // VÁ LỖI TREO UI: Trì hoãn alert 100ms để React kịp xóa giao diện Loading
+      setTimeout(() => {
+        alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to hơn nhé!");
+      }, 100);
       return;
     }
     analyzeResult(originalText, fullSpokenText, paragraphId);
@@ -113,18 +115,16 @@ export default function MainReader() {
     }
 
     if (isRecording) {
-      isStoppingRef.current = true; // Đánh dấu là user tự bấm dừng
+      isStoppingRef.current = true; 
       setIsGrading(true); 
       
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch(e) {}
         
-        // Hẹn giờ: Nếu Chrome ngáo quá 1.5s không chịu nhả kết quả thì ép nó ngắt kết nối
         stopTimeoutRef.current = setTimeout(() => {
           if (isStoppingRef.current && recognitionRef.current) {
             console.log("Ép ngắt kết nối do Chrome phản hồi chậm...");
             try { recognitionRef.current.abort(); } catch(e){}
-            // Lệnh abort() sẽ tự động gọi onend để đi chấm điểm
           }
         }, 1500);
       }
@@ -152,23 +152,21 @@ export default function MainReader() {
         console.error("Lỗi Micro:", event.error);
         
         if (event.error === 'not-allowed') {
-          alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
           forceStopAndCleanMic();
           setIsGrading(false);
+          setTimeout(() => alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!"), 100);
           return;
         }
         
-        // VÁ LỖI NETWORK Ở ĐÂY:
-        // Nếu đang trong quá trình ép dừng/chấm điểm mà mạng rớt -> Kệ nó, không được hủy giao diện Loading
         if (isStoppingRef.current) {
           return; 
         }
 
-        // Còn nếu đang đọc bình thường mà đứt mạng -> Tắt mic đi và báo nhẹ 1 tiếng
         forceStopAndCleanMic();
         setIsGrading(false);
         if (event.error === 'network') {
-          alert("Mạng không ổn định khiến Micro bị ngắt. Hãy thử đọc lại nhé!");
+          // VÁ LỖI TREO UI
+          setTimeout(() => alert("Mạng không ổn định khiến Micro bị ngắt. Hãy thử đọc lại nhé!"), 100);
         }
       };
 
@@ -191,23 +189,25 @@ export default function MainReader() {
       };
 
       recognition.onend = () => {
-        clearTimeout(stopTimeoutRef.current); // Tắt hẹn giờ ép dừng
+        clearTimeout(stopTimeoutRef.current); 
         recognitionRef.current = null;
         setIsRecording(false);
         
         const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
 
-        // Nếu có đọc chữ nào đó thì tự động đem đi chấm (bất kể do mình bấm Ngừng hay Chrome tự tắt)
         if (fullSpokenText.length > 0 && currentParagraph) {
           triggerGrading(currentParagraph.content, currentParagraph.id);
         } else {
           setIsGrading(false);
           if (isStoppingRef.current) {
-            alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro nhé!");
+            // VÁ LỖI TREO UI 
+            setTimeout(() => {
+              alert("Lỗi kết nối mạng đã làm mất dữ liệu ghi âm. Hãy thử đọc lại lần nữa nhé!");
+            }, 100);
           }
         }
         
-        isStoppingRef.current = false; // Reset cờ
+        isStoppingRef.current = false; 
       };
 
       recognitionRef.current = recognition;
@@ -293,7 +293,7 @@ export default function MainReader() {
               </li>
             ) : articles.length === 0 ? (
               <li className="text-sm text-slate-500 p-4 text-center border border-slate-100 bg-slate-50 rounded-xl italic">
-                Chưa có bài đọc nào. Bạn hãy vào trang Admin để thêm bài mới nhé!
+                Chưa có bài đọc nào. Bạn hãy vào trang Quản Trị Viên để thêm bài mới nhé!
               </li>
             ) : (
               Array.isArray(articles) && articles.map(a => (
