@@ -31,13 +31,13 @@ export default function MainReader() {
   const [score, setScore] = useState<number | null>(null);
   const [wrongWords, setWrongWords] = useState<WrongWord[]>([]);
   const [userTranscript, setUserTranscript] = useState<string>('');
-  const [attempts, setAttempts] = useState<number>(0);
+  
+  // Dùng useRef để quản lý số lần thử giúp tránh lỗi state bị cũ (stale state)
+  const attemptsRef = useRef<number>(0);
 
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
-  
-  // TÍNH NĂNG MỚI: Người gác cổng để biết user chủ động dừng hay bị Chrome ngắt
-  const isManualStopRef = useRef<boolean>(false);
+  const interimTranscriptRef = useRef<string>('');
 
   useEffect(() => {
     fetch(`${BASE_URL}/articles`)
@@ -46,21 +46,22 @@ export default function MainReader() {
       .catch(err => console.error("Lỗi tải danh sách bài:", err));
   }, []);
 
+  // Hàm dọn dẹp sạch sẽ Micro (Tránh rác phần cứng)
   const forceStopAndCleanMic = () => {
-    isManualStopRef.current = true; // Ép dừng
     if (recognitionRef.current) {
       recognitionRef.current.onend = null;
       recognitionRef.current.onstart = null;
       recognitionRef.current.onerror = null;
+      recognitionRef.current.onresult = null;
       try { recognitionRef.current.abort(); } catch (e) {}
       recognitionRef.current = null;
     }
     setIsRecording(false);
-    setIsGrading(false);
   };
 
   const handleSelectArticle = async (articleId: number) => {
     forceStopAndCleanMic();
+    setIsGrading(false);
     
     setSelectedArticleId(articleId);
     setCurrentParagraph(null); 
@@ -87,6 +88,19 @@ export default function MainReader() {
     }
   };
 
+  const triggerGrading = (originalText: string, paragraphId: number) => {
+    // Ghép chữ đã chốt + chữ nói dở thành đoạn văn hoàn chỉnh
+    const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
+
+    if (fullSpokenText.length === 0) {
+      setIsGrading(false);
+      alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro và đọc to hơn nhé!");
+      return;
+    }
+
+    analyzeResult(originalText, fullSpokenText, paragraphId);
+  };
+
   const toggleRecording = () => {
     if (!userName.trim()) return alert("Vui lòng nhập tên của bạn trước nhé!");
     
@@ -96,17 +110,35 @@ export default function MainReader() {
       return;
     }
 
+    // 1. NẾU ĐANG GHI ÂM -> BẤM DỪNG
     if (isRecording) {
-      // User ĐÍCH THÂN bấm dừng
-      isManualStopRef.current = true;
-      setIsGrading(true); 
-      if (recognitionRef.current) recognitionRef.current.stop();
-      setAttempts(prev => prev + 1);
-    } else {
+      setIsGrading(true); // Bật loading ngay lập tức
+      
+      if (recognitionRef.current) {
+        recognitionRef.current.stop(); // Báo Chrome dừng lại nhẹ nhàng
+        
+        // CƠ CHẾ BẢO VỆ CHỐNG TREO WEB (ZOMBIE KILLER):
+        // Nếu sau 1.5 giây mà Chrome bị đơ không chịu trả kết quả, ép thu hồi và chấm điểm luôn!
+        setTimeout(() => {
+          if (recognitionRef.current) {
+            console.log("Ép chấm điểm do Chrome phản hồi chậm...");
+            forceStopAndCleanMic();
+            setIsGrading(true);
+            if (currentParagraph) {
+              triggerGrading(currentParagraph.content, currentParagraph.id);
+            } else {
+              setIsGrading(false);
+            }
+          }
+        }, 1500);
+      }
+    } 
+    // 2. NẾU CHƯA GHI ÂM -> BẮT ĐẦU
+    else {
       forceStopAndCleanMic();
 
-      isManualStopRef.current = false; // Bắt đầu trạng thái thu âm tự do
       finalTranscriptRef.current = '';
+      interimTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
@@ -120,50 +152,41 @@ export default function MainReader() {
       recognition.onstart = () => setIsRecording(true);
       
       recognition.onerror = (event: any) => {
+        console.error("Lỗi Micro:", event.error);
         if (event.error === 'not-allowed') {
-          console.error("Lỗi Micro:", event.error);
-          setIsRecording(false);
-          setIsGrading(false);
           alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
-          isManualStopRef.current = true;
         }
-        // Bỏ qua các lỗi lặt vặt khác để mic tự động phục hồi
+        forceStopAndCleanMic();
+        setIsGrading(false);
       };
 
       recognition.onresult = (event: any) => {
-        let currentTranscript = '';
+        let finalChunk = '';
+        let interimChunk = '';
+        
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            currentTranscript += event.results[i][0].transcript + ' ';
+            finalChunk += event.results[i][0].transcript + ' ';
+          } else {
+            interimChunk += event.results[i][0].transcript;
           }
         }
-        if (currentTranscript) {
-          // Nối chữ liên tục vào bộ nhớ
-          finalTranscriptRef.current += currentTranscript;
+        
+        if (finalChunk) {
+          finalTranscriptRef.current += finalChunk;
         }
+        interimTranscriptRef.current = interimChunk;
       };
 
       recognition.onend = () => {
-        // KIỂM TRA: Ai là người tắt Mic?
-        if (!isManualStopRef.current) {
-          // Nếu Chrome tự tắt (do im lặng quá 5s) -> Bật lại lập tức để "tiếp sức"!
-          try {
-            recognition.start();
-            return; // Dừng việc chấm điểm lại
-          } catch (e) {
-            console.error("Không thể tự động bật lại mic", e);
-          }
-        }
-
-        // Nếu isManualStopRef = true (User tự bấm Ngừng), mới đi chấm điểm
+        // Hàm này tự chạy khi user bấm Ngừng, HOẶC Chrome tự động ngắt do user im lặng
+        recognitionRef.current = null;
         setIsRecording(false);
-        if (currentParagraph && finalTranscriptRef.current.trim().length > 0) {
-          analyzeResult(currentParagraph.content, finalTranscriptRef.current);
+        setIsGrading(true);
+        if (currentParagraph) {
+          triggerGrading(currentParagraph.content, currentParagraph.id);
         } else {
-          setIsGrading(false); 
-          if (finalTranscriptRef.current.trim().length === 0) {
-             alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra lại Micro nhé!");
-          }
+          setIsGrading(false);
         }
       };
 
@@ -173,8 +196,8 @@ export default function MainReader() {
         recognition.start();
       } catch (err) {
         console.error("Lỗi khởi động Micro:", err);
+        forceStopAndCleanMic();
         setIsGrading(false);
-        setIsRecording(false);
       }
     }
   };
@@ -195,7 +218,7 @@ export default function MainReader() {
     return Promise.all(promises);
   };
 
-  const analyzeResult = async (original: string, spoken: string) => {
+  const analyzeResult = async (original: string, spoken: string, paragraphId: number) => {
     setIsGrading(true);
     setUserTranscript(spoken);
     
@@ -218,14 +241,13 @@ export default function MainReader() {
         setWrongWords([]);
       }
 
-      if (currentScore >= 80 && spoken.trim().length > 0) {
-        if (currentParagraph) {
-          await fetch(`${BASE_URL}/records/${currentParagraph.id}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userName, attempts: attempts + 1 })
-          });
-        }
+      if (currentScore >= 80) {
+        attemptsRef.current += 1; // Tăng lượt nộp bài thành công
+        await fetch(`${BASE_URL}/records/${paragraphId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userName, attempts: attemptsRef.current })
+        });
       }
     } catch (error) {
       console.error("Lỗi khi chấm điểm:", error);
@@ -261,12 +283,13 @@ export default function MainReader() {
                           <button 
                             onClick={() => {
                               forceStopAndCleanMic();
+                              setIsGrading(false);
                               setCurrentParagraph(p); 
                               setAnalyzedText([]); 
                               setScore(null);
                               setWrongWords([]);
                               setUserTranscript('');
-                              setAttempts(0);
+                              attemptsRef.current = 0; // Reset số lần đếm
                             }} 
                             className={`text-sm w-full text-left px-4 py-2 rounded-r-xl transition-colors ${currentParagraph?.id === p.id ? 'text-blue-600 font-medium bg-gradient-to-r from-blue-50 to-transparent border-l-2 border-blue-500 -ml-[2px]' : 'text-slate-500 hover:text-slate-800'}`}
                           >
@@ -324,20 +347,12 @@ export default function MainReader() {
                 </button>
               </div>
 
-              {isGrading && (
-                <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
-                  <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-                  <span className="text-blue-800 font-medium">Hệ thống đang phân tích giọng đọc và tra cứu phiên âm...</span>
-                </div>
-              )}
-
               {!isGrading && userTranscript && (
                 <div className="mb-6 p-5 rounded-xl bg-slate-50 border border-slate-200 border-l-4 border-l-blue-500 animate-fade-in-up w-full overflow-hidden">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
                     Hệ thống nghe được:
                   </h4>
-                  {/* FIX RESPONSIVE: break-words giúp ép chữ dài tự xuống dòng */}
                   <p className="text-slate-800 italic text-lg break-words whitespace-pre-wrap">"{userTranscript}"</p>
                 </div>
               )}
@@ -352,7 +367,6 @@ export default function MainReader() {
                 </div>
               )}
 
-              {/* FIX RESPONSIVE KHUNG ĐỌC: break-words giúp không bị tràn chữ ngang ra ngoài */}
               <div className="bg-slate-50/50 border border-slate-100 p-6 sm:p-8 rounded-2xl text-lg sm:text-xl leading-loose min-h-[250px] shadow-inner text-slate-700 mb-8 w-full overflow-hidden break-words whitespace-pre-wrap">
                 {analyzedText.length > 0 && !isGrading ? (
                   <div className="space-x-1 inline">
