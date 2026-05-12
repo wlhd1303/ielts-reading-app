@@ -36,7 +36,6 @@ export default function MainReader() {
   const attemptsRef = useRef<number>(0);
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
-  const interimTranscriptRef = useRef<string>('');
   
   const isStoppingRef = useRef<boolean>(false);
   const stopTimeoutRef = useRef<any>(null);
@@ -93,7 +92,7 @@ export default function MainReader() {
   };
 
   const triggerGrading = (originalText: string, paragraphId: number) => {
-    const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
+    const fullSpokenText = finalTranscriptRef.current.trim();
     if (fullSpokenText.length === 0) {
       setIsGrading(false);
       setTimeout(() => {
@@ -134,7 +133,6 @@ export default function MainReader() {
       isStoppingRef.current = false;
       
       finalTranscriptRef.current = '';
-      interimTranscriptRef.current = '';
       setAnalyzedText([]);
       setScore(null);
       setWrongWords([]);
@@ -144,7 +142,7 @@ export default function MainReader() {
       recognition.lang = 'en-US'; 
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.maxAlternatives = 1; // TỐI ƯU HIỆU NĂNG: Ép trình duyệt trả kết quả nhanh nhất và chuẩn xác nhất
+      recognition.maxAlternatives = 1; // Tối ưu tốc độ lấy kết quả
 
       recognition.onstart = () => setIsRecording(true);
       
@@ -166,21 +164,26 @@ export default function MainReader() {
       };
 
       recognition.onresult = (event: any) => {
-        let finalChunk = '';
-        let interimChunk = '';
+        let fullText = '';
         
-        // SỬA LỖI LẶP TỪ: Quét lại toàn bộ mảng kết quả từ vị trí số 0 để lấy nguyên câu sạch sẽ nhất
+        // VÁ LỖI LẶP TỪ (ANDROID BUG): Khử trùng lặp thông minh
         for (let i = 0; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalChunk += event.results[i][0].transcript + ' ';
-          } else {
-            interimChunk += event.results[i][0].transcript;
-          }
+            let transcript = event.results[i][0].transcript;
+            
+            // Xóa dấu câu và khoảng trắng để so sánh chính xác
+            let cleanFull = fullText.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            let cleanTrans = transcript.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            
+            // Nếu đoạn chữ mới gửi lên CÓ CHỨA đoạn chữ cũ -> Android đang bị lặp -> Ghi đè!
+            if (cleanFull.length > 0 && cleanTrans.startsWith(cleanFull)) {
+                fullText = transcript;
+            } else {
+                // Nếu không chứa -> PC gửi đúng từng chữ -> Nối vào!
+                fullText += (fullText.endsWith(' ') || transcript.startsWith(' ') || fullText === '' ? '' : ' ') + transcript;
+            }
         }
         
-        // Cập nhật lại toàn bộ đoạn văn (Tuyệt đối không dùng += ở đây để tránh bị Chrome lặp chữ)
-        finalTranscriptRef.current = finalChunk;
-        interimTranscriptRef.current = interimChunk;
+        finalTranscriptRef.current = fullText;
       };
 
       recognition.onend = () => {
@@ -188,7 +191,7 @@ export default function MainReader() {
         recognitionRef.current = null;
         setIsRecording(false);
         
-        const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
+        const fullSpokenText = finalTranscriptRef.current.trim();
 
         if (fullSpokenText.length > 0 && currentParagraph) {
           triggerGrading(currentParagraph.content, currentParagraph.id);
@@ -380,7 +383,6 @@ export default function MainReader() {
                 </div>
               )}
 
-              {/* Vẫn giữ lại phần "Hệ thống ghi nhận được" (hiện ra sau khi chấm điểm) để học viên đối chiếu, theo đúng code cũ */}
               {!isGrading && userTranscript && !isRecording && (
                 <div className="mb-6 p-5 rounded-xl bg-slate-50 border border-slate-200 border-l-4 border-l-blue-500 animate-fade-in-up w-full overflow-hidden">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
