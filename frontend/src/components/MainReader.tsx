@@ -16,9 +16,7 @@ declare global {
 
 export default function MainReader() {
   const [articles, setArticles] = useState<Article[]>([]);
-  // STATE MỚI: Theo dõi việc tải danh sách bài đọc ban đầu
   const [isLoadingArticles, setIsLoadingArticles] = useState<boolean>(true);
-  
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(null);
   
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
@@ -39,19 +37,18 @@ export default function MainReader() {
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef<string>('');
   const interimTranscriptRef = useRef<string>('');
+  
+  // 2 Biến mới để trị lỗi Network và chống Treo Web
+  const isStoppingRef = useRef<boolean>(false);
+  const stopTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
-    // Bật Loading khi mới vào web
     setIsLoadingArticles(true);
     fetch(`${BASE_URL}/articles`)
       .then(res => res.json())
-      .then(data => {
-        setArticles(data);
-      })
+      .then(data => setArticles(data))
       .catch(err => console.error("Lỗi tải danh sách bài:", err))
-      .finally(() => {
-        setIsLoadingArticles(false); // Tắt loading khi tải xong (kể cả lỗi hay thành công)
-      });
+      .finally(() => setIsLoadingArticles(false));
   }, []);
 
   const forceStopAndCleanMic = () => {
@@ -69,6 +66,7 @@ export default function MainReader() {
   const handleSelectArticle = async (articleId: number) => {
     forceStopAndCleanMic();
     setIsGrading(false);
+    clearTimeout(stopTimeoutRef.current);
     
     setSelectedArticleId(articleId);
     setCurrentParagraph(null); 
@@ -115,25 +113,27 @@ export default function MainReader() {
     }
 
     if (isRecording) {
+      isStoppingRef.current = true; // Đánh dấu là user tự bấm dừng
       setIsGrading(true); 
+      
       if (recognitionRef.current) {
-        recognitionRef.current.stop(); 
+        try { recognitionRef.current.stop(); } catch(e) {}
         
-        setTimeout(() => {
-          if (recognitionRef.current) {
-            forceStopAndCleanMic();
-            setIsGrading(true);
-            if (currentParagraph) {
-              triggerGrading(currentParagraph.content, currentParagraph.id);
-            } else {
-              setIsGrading(false);
-            }
+        // Hẹn giờ: Nếu Chrome ngáo quá 1.5s không chịu nhả kết quả thì ép nó ngắt kết nối
+        stopTimeoutRef.current = setTimeout(() => {
+          if (isStoppingRef.current && recognitionRef.current) {
+            console.log("Ép ngắt kết nối do Chrome phản hồi chậm...");
+            try { recognitionRef.current.abort(); } catch(e){}
+            // Lệnh abort() sẽ tự động gọi onend để đi chấm điểm
           }
         }, 1500);
       }
     } 
     else {
       forceStopAndCleanMic();
+      clearTimeout(stopTimeoutRef.current);
+      isStoppingRef.current = false;
+      
       finalTranscriptRef.current = '';
       interimTranscriptRef.current = '';
       setAnalyzedText([]);
@@ -150,11 +150,26 @@ export default function MainReader() {
       
       recognition.onerror = (event: any) => {
         console.error("Lỗi Micro:", event.error);
+        
         if (event.error === 'not-allowed') {
           alert("Vui lòng cấp quyền sử dụng Micro cho trình duyệt nhé!");
+          forceStopAndCleanMic();
+          setIsGrading(false);
+          return;
         }
+        
+        // VÁ LỖI NETWORK Ở ĐÂY:
+        // Nếu đang trong quá trình ép dừng/chấm điểm mà mạng rớt -> Kệ nó, không được hủy giao diện Loading
+        if (isStoppingRef.current) {
+          return; 
+        }
+
+        // Còn nếu đang đọc bình thường mà đứt mạng -> Tắt mic đi và báo nhẹ 1 tiếng
         forceStopAndCleanMic();
         setIsGrading(false);
+        if (event.error === 'network') {
+          alert("Mạng không ổn định khiến Micro bị ngắt. Hãy thử đọc lại nhé!");
+        }
       };
 
       recognition.onresult = (event: any) => {
@@ -176,14 +191,23 @@ export default function MainReader() {
       };
 
       recognition.onend = () => {
+        clearTimeout(stopTimeoutRef.current); // Tắt hẹn giờ ép dừng
         recognitionRef.current = null;
         setIsRecording(false);
-        setIsGrading(true);
-        if (currentParagraph) {
+        
+        const fullSpokenText = (finalTranscriptRef.current + ' ' + interimTranscriptRef.current).trim();
+
+        // Nếu có đọc chữ nào đó thì tự động đem đi chấm (bất kể do mình bấm Ngừng hay Chrome tự tắt)
+        if (fullSpokenText.length > 0 && currentParagraph) {
           triggerGrading(currentParagraph.content, currentParagraph.id);
         } else {
           setIsGrading(false);
+          if (isStoppingRef.current) {
+            alert("Hệ thống chưa nghe được bạn nói gì. Hãy kiểm tra Micro nhé!");
+          }
         }
+        
+        isStoppingRef.current = false; // Reset cờ
       };
 
       recognitionRef.current = recognition;
@@ -262,7 +286,6 @@ export default function MainReader() {
           </h2>
           
           <ul className="space-y-2 max-h-[40vh] lg:max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
-            {/* THÊM 3 TRẠNG THÁI HIỂN THỊ Ở ĐÂY */}
             {isLoadingArticles ? (
               <li className="text-sm text-blue-600 p-4 text-center border border-blue-100 bg-blue-50 rounded-xl animate-pulse flex flex-col items-center gap-2">
                 <div className="w-5 h-5 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
@@ -270,7 +293,7 @@ export default function MainReader() {
               </li>
             ) : articles.length === 0 ? (
               <li className="text-sm text-slate-500 p-4 text-center border border-slate-100 bg-slate-50 rounded-xl italic">
-                Chưa có bài đọc nào. Bạn hãy vào trang Quản Trị Viên để thêm bài mới nhé!
+                Chưa có bài đọc nào. Bạn hãy vào trang Admin để thêm bài mới nhé!
               </li>
             ) : (
               Array.isArray(articles) && articles.map(a => (
@@ -291,6 +314,7 @@ export default function MainReader() {
                             <button 
                               onClick={() => {
                                 forceStopAndCleanMic();
+                                clearTimeout(stopTimeoutRef.current);
                                 setIsGrading(false);
                                 setCurrentParagraph(p); 
                                 setAnalyzedText([]); 
@@ -355,6 +379,13 @@ export default function MainReader() {
                   )}
                 </button>
               </div>
+
+              {isGrading && (
+                <div className="mb-6 p-5 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center gap-3 animate-pulse shadow-inner">
+                  <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+                  <span className="text-blue-800 font-medium">Hệ thống đang phân tích giọng đọc và tra cứu phiên âm...</span>
+                </div>
+              )}
 
               {!isGrading && userTranscript && (
                 <div className="mb-6 p-5 rounded-xl bg-slate-50 border border-slate-200 border-l-4 border-l-blue-500 animate-fade-in-up w-full overflow-hidden">
